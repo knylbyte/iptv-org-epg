@@ -3,7 +3,7 @@ name: Update Node Image Tag
 on:
   workflow_dispatch:
   schedule:
-    - cron: "* */12 * * *"
+    - cron: "0 */12 * * *"
 
 permissions:
   contents: write
@@ -171,7 +171,8 @@ jobs:
         if: always()
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            echo "\n✅  Node base image updated to ${{ steps.update.outputs.new_tag }}."
-            echo "🧱  Push to master triggers Docker image build workflow.\n"
+            printf "\n✅  Node base image updated to %s.\n" "${{ steps.update.outputs.new_tag }}"
+            printf "🧱  Push to master triggers Docker image build workflow.\n\n"
           else
-            echo "\n✅  Node base image already up-to-date.\n"
+            printf "\n✅  Node base image already up-to-date.\n\n"
+          fi
