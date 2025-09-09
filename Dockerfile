@@ -15,7 +15,7 @@ ENV NODE_ENV=production \
 COPY package*.json ./
 
 # Install only production deps, skip lifecycle scripts
-RUN npm ci --omit=dev --no-audit --no-fund
+RUN npm ci --omit=dev --no-audit --no-fund --ignore-scripts
 
 # Copy only runtime-relevant sources
 COPY scripts ./scripts
@@ -24,6 +24,7 @@ COPY pm2.config.js ./pm2.config.js
 COPY tsconfig.json ./tsconfig.json
 COPY package.json ./package.json
 
+# Manually repeat the post-installation step (loads temp/data/*.json)
 RUN npm run api:load
 
 # --- Runtime stage: minimal files needed to run ---
