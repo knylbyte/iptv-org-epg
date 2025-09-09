@@ -252,12 +252,36 @@ jobs:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
+          PR_BRANCH: ${{ steps.cpr.outputs.pull-request-branch }}
+          REPO_OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
           set -euo pipefail
           echo ""
-          echo "⏳  Waiting for checks to pass, then merging PR #${PR_NUMBER}..."
+          echo "⏳  Waiting for checks to pass, then merging PR..."
           echo ""
+
+          # Resolve PR number if missing (fallbacks: URL -> API by head branch)
+          if [[ -z "${PR_NUMBER:-}" || "${PR_NUMBER}" == "null" ]]; then
+            if [[ -n "${PR_URL:-}" && "${PR_URL}" != "null" ]]; then
+              PR_NUMBER="${PR_URL##*/}"
+            fi
+          fi
+          if [[ -z "${PR_NUMBER:-}" || "${PR_NUMBER}" == "null" ]]; then
+            if [[ -n "${PR_BRANCH:-}" && "${PR_BRANCH}" != "null" ]]; then
+              echo "🔎  Looking up PR number for branch: ${PR_BRANCH}"
+              api="https://api.github.com/repos/${GH_REPO}/pulls?state=open&head=${REPO_OWNER}:${PR_BRANCH}"
+              PR_NUMBER=$(curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" "$api" | jq -r '.[0].number')
+            fi
+          fi
+
+          if [[ -z "${PR_NUMBER:-}" || "${PR_NUMBER}" == "null" ]]; then
+            echo "❌  Could not resolve PR number for merge."
+            exit 1
+          fi
+
+          echo "PR #${PR_NUMBER}"
 
           max_attempts=240 # ~2h at 30s interval
           attempt=0
