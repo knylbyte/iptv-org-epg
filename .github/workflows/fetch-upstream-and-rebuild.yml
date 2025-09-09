@@ -41,12 +41,15 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-24.04
             tag_suffix: linux-amd64
+            node_image: 24-alpine
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             tag_suffix: linux-arm64
+            node_image: 24-alpine
           - platform: linux/arm/v7
             runner: ubuntu-24.04-arm
             tag_suffix: linux-armv7
+            node_image: 22-alpine
 
     runs-on: ${{ matrix.runner || 'ubuntu-24.04' }}
 
@@ -76,6 +79,8 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE }}:${{ matrix.tag_suffix }}
+          build-args: |
+            NODE_IMAGE=${{ matrix.node_image }}
           cache-from: |
             type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.tag_suffix }}
           cache-to: |
