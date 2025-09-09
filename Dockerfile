@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 # --- Global ARGs ---
 ARG NODE_IMAGE=22-alpine
 
@@ -14,9 +16,11 @@ ENV NODE_ENV=production \
 # Copy lockfile and manifest first to leverage Docker cache
 COPY package*.json ./
 
-# Install only production deps, skip lifecycle scripts
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
-  || npm install --omit=dev --ignore-scripts --no-audit --no-fund
+# Install only production deps with BuildKit cache
+# Allow lifecycle scripts so prebuilt binaries (e.g. esbuild) are fetched
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --omit=dev --no-audit --no-fund \
+    || npm install --omit=dev --no-audit --no-fund
 
 # Copy only runtime-relevant sources
 COPY scripts ./scripts
