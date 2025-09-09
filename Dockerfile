@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 # --- Global ARGs ---
 ARG NODE_IMAGE=22-alpine
 
@@ -16,21 +14,15 @@ ENV NODE_ENV=production \
 # Copy lockfile and manifest first to leverage Docker cache
 COPY package*.json ./
 
-# Install only production deps with BuildKit cache
-# Skip lifecycle scripts to avoid running repo postinstall during build
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
-    || npm install --omit=dev --ignore-scripts --no-audit --no-fund
+# Install only production deps, skip lifecycle scripts
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+  || npm install --omit=dev --ignore-scripts --no-audit --no-fund
 
 # Copy only runtime-relevant sources
 COPY scripts ./scripts
 COPY sites ./sites
 COPY pm2.config.js ./pm2.config.js
 COPY tsconfig.json ./tsconfig.json
-
-# Ensure esbuild native binary is prepared for tsx at runtime
-RUN --mount=type=cache,target=/root/.npm \
-    npm rebuild esbuild --no-audit --no-fund || true
 
 
 # --- Runtime stage: minimal files needed to run ---
