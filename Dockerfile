@@ -17,16 +17,20 @@ ENV NODE_ENV=production \
 COPY package*.json ./
 
 # Install only production deps with BuildKit cache
-# Allow lifecycle scripts so prebuilt binaries (e.g. esbuild) are fetched
+# Skip lifecycle scripts to avoid running repo postinstall during build
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --omit=dev --no-audit --no-fund \
-    || npm install --omit=dev --no-audit --no-fund
+    npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
+    || npm install --omit=dev --ignore-scripts --no-audit --no-fund
 
 # Copy only runtime-relevant sources
 COPY scripts ./scripts
 COPY sites ./sites
 COPY pm2.config.js ./pm2.config.js
 COPY tsconfig.json ./tsconfig.json
+
+# Ensure esbuild native binary is prepared for tsx at runtime
+RUN --mount=type=cache,target=/root/.npm \
+    npm rebuild esbuild --no-audit --no-fund || true
 
 
 # --- Runtime stage: minimal files needed to run ---
