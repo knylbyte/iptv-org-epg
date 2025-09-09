@@ -220,22 +220,65 @@ jobs:
           git commit -m "chore(docker): bump NODE_IMAGE to ${{ steps.update.outputs.new_tag }}"
           git push
 
-      - name: Step 4b — Open PR for workflow changes
+      - name: Step 4b — Create PR branch and open PR (workflow changed)
         if: steps.update.outputs.updated == 'true' && steps.update.outputs.workflow_changed == 'true'
-        id: cpr
-        uses: peter-evans/create-pull-request@v6
-        with:
-          commit-message: |
-            chore(ci): update per-arch node_image matrix and Dockerfile default to ${{ steps.update.outputs.new_tag }}
-          title: "chore(ci): update node_image matrix and Dockerfile to ${{ steps.update.outputs.new_tag }}"
-          body: |
-            This PR updates:
-            - Dockerfile default `ARG NODE_IMAGE` to `${{ steps.update.outputs.new_tag }}` (amd64 baseline)
-            - Per-arch `node_image` values in the build matrix
+        id: pr
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW_TAG: ${{ steps.update.outputs.new_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo ""
+          echo "🌿  Preparing PR branch with only intended changes..."
+          echo ""
 
-            Once merged to `master`, it will trigger the Docker image rebuild workflow.
-          branch: ci/bump-node-image-${{ steps.update.outputs.new_tag }}
-          delete-branch: true
+          BRANCH="ci/bump-node-image-${NEW_TAG}"
+
+          # Save patch of intended files
+          git diff -- Dockerfile .github/workflows/fetch-upstream-and-rebuild.yml > /tmp/bump.patch || true
+
+          # Reset to clean state and switch to new branch
+          git reset --hard HEAD
+          git checkout -B "$BRANCH"
+
+          # Apply patch and commit
+          if [[ -s /tmp/bump.patch ]]; then
+            git apply /tmp/bump.patch
+          fi
+          git add Dockerfile .github/workflows/fetch-upstream-and-rebuild.yml
+          git commit -m "chore(ci): update per-arch node_image matrix and Dockerfile default to ${NEW_TAG}" || true
+
+          # Push branch
+          git push -u origin "$BRANCH"
+
+          # Open PR via API
+          title="chore(ci): update node_image matrix and Dockerfile to ${NEW_TAG}"
+          body=$(cat <<'EOF'
+This PR updates:
+- Dockerfile default `ARG NODE_IMAGE` to the latest amd64 tag
+- Per-arch `node_image` values in the build matrix
+
+Once merged to `master`, it will trigger the Docker image rebuild workflow.
+EOF
+)
+          data=$(jq -n --arg title "$title" --arg head "$BRANCH" --arg base "master" --arg body "$body" '{title:$title, head:$head, base:$base, body:$body, maintainer_can_modify:true}')
+          resp=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -X POST \
+                   -d "$data" "https://api.github.com/repos/${GH_REPO}/pulls")
+          pr_number=$(echo "$resp" | jq -r '.number')
+          pr_url=$(echo "$resp" | jq -r '.html_url')
+
+          if [[ -z "$pr_number" || "$pr_number" == "null" ]]; then
+            echo "❌  Failed to create PR"
+            echo "$resp" >&2
+            exit 1
+          fi
+
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "pr_url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "pr_branch=$BRANCH" >> "$GITHUB_OUTPUT"
+          echo "✅  Opened PR: $pr_url"
 
       - name: Step 4c — Enable PR auto-merge (squash)
         if: steps.update.outputs.updated == 'true' && steps.update.outputs.workflow_changed == 'true'
@@ -243,7 +286,7 @@ jobs:
         continue-on-error: true
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
+          pull-request-number: ${{ steps.pr.outputs.pr_number }}
           merge-method: squash
 
       - name: Step 4d — Wait for checks and merge PR (squash)
@@ -251,9 +294,9 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
-          PR_URL: ${{ steps.cpr.outputs.pull-request-url }}
-          PR_BRANCH: ${{ steps.cpr.outputs.pull-request-branch }}
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+          PR_URL: ${{ steps.pr.outputs.pr_url }}
+          PR_BRANCH: ${{ steps.pr.outputs.pr_branch }}
           REPO_OWNER: ${{ github.repository_owner }}
         shell: bash
         run: |
@@ -329,7 +372,7 @@ jobs:
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
             if [[ "${{ steps.update.outputs.workflow_changed }}" == "true" ]]; then
               printf "\n✅  Changes prepared. Opened PR to update workflow matrix and Dockerfile.\n"
-              printf "🔗  %s\n\n" "${{ steps.cpr.outputs.pull-request-url }}"
+              printf "🔗  %s\n\n" "${{ steps.pr.outputs.pr_url }}"
             else
               printf "\n✅  Node base image updated to %s.\n" "${{ steps.update.outputs.new_tag }}"
               printf "🧱  Push to master triggers Docker image build workflow.\n\n"
