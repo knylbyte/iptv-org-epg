@@ -172,8 +172,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            printf "\n✅  Node base image updated to %s.\n" "${{ steps.update.outputs.new_tag }}"
-            printf "🧱  Push to master triggers Docker image build workflow.\n\n"
+            echo "\n✅  Node base image updated to ${{ steps.update.outputs.new_tag }}."
+            echo "🧱  Push to master triggers Docker image build workflow.\n"
           else
-            printf "\n✅  Node base image already up-to-date.\n\n"
-          fi
+            echo "\n✅  Node base image already up-to-date.\n"
