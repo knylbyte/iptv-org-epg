@@ -32,7 +32,6 @@ jobs:
           upstream_sync_repo: iptv-org/epg
           upstream_sync_branch: master
 
-
   build:
     needs: sync
     strategy:
