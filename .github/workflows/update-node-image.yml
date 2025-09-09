@@ -76,6 +76,7 @@ jobs:
                       | sort \
                       | last \
                       | join(".")']
+          )
 
           if [[ -z "$latest_version" ]]; then
             echo "Failed to determine latest Node version" >&2
@@ -83,7 +84,7 @@ jobs:
           fi
 
           latest_major=${latest_version%%.*}
-          
+
           echo "latest_version=$latest_version" >> "$GITHUB_OUTPUT"
           echo "latest_major=$latest_major" >> "$GITHUB_OUTPUT"
           echo "Latest Node: version=$latest_version major=$latest_major"
