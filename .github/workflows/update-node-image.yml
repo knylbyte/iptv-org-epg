@@ -36,27 +36,39 @@ jobs:
         run: |
           set -euo pipefail
 
-          current_tag=$(sed -n 's/^ARG NODE_IMAGE=\(.*\)$/\1/p' Dockerfile)
+          echo ""
+          echo "🔎  Reading current version from Dockerfile..."
+          echo ""
 
+          current_tag=$(sed -n 's/^ARG NODE_IMAGE=\(.*\)$/\1/p' Dockerfile)
           if [[ -z "$current_tag" ]]; then
-            echo "Could not find current NODE_IMAGE in Dockerfile" >&2
+            echo "❌  Could not find current NODE_IMAGE in Dockerfile" >&2
             exit 1
           fi
 
-          # Extract full semver if present, else empty
-          current_version=$(echo "$current_tag" | grep -oE '^[0-9]+(\.[0-9]+){2}(?=-)' || true)
+          # Extract full semver prefix if present (e.g. 22.9.0 from 22.9.0-alpine)
+          semver_prefix=$(echo "$current_tag" | cut -d'-' -f1)
+          if [[ "$semver_prefix" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            current_version="$semver_prefix"
+          else
+            current_version=""
+          fi
 
-          # Extract major (from version if present, else from tag prefix before '-')
+          # Extract major (prefer from semver; else from tag start)
           if [[ -n "${current_version}" ]]; then
             current_major=${current_version%%.*}
           else
-            current_major=$(echo "$current_tag" | grep -oE '^[0-9]+' || true)
+            current_major=$(echo "$current_tag" | sed -n 's/^\([0-9][0-9]*\).*$/\1/p')
           fi
 
           echo "current_tag=$current_tag" >> "$GITHUB_OUTPUT"
           echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
           echo "current_major=$current_major" >> "$GITHUB_OUTPUT"
-          echo "Current: tag=$current_tag version=${current_version:-N/A} major=${current_major:-N/A}"
+
+          echo "✅  Current tag:        $current_tag"
+          echo "✅  Current semver:     ${current_version:-N/A}"
+          echo "✅  Current major:      ${current_major:-N/A}"
+          echo ""
 
       - name: Step 2 — Latest Node version via curl (with retries)
         id: latest
@@ -66,20 +78,25 @@ jobs:
         run: |
           set -euo pipefail
 
-          latest_version=$(curl -fsSL \
+          echo ""
+          echo "🌐  Fetching latest Node version..."
+          echo ""
+
+          latest_version=$(
+            curl -fsSL \
               -H "User-Agent: $UA" \
               -H "Accept: application/json" \
               --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
               "https://nodejs.org/dist/index.json" \
-            | jq -r '[.[].version | ltrimstr("v")] \
-                      | map(split(".") | map(tonumber)) \
-                      | sort \
-                      | last \
-                      | join(".")']
+            | jq -r '.[].version' \
+            | sed 's/^v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -1
           )
 
           if [[ -z "$latest_version" ]]; then
-            echo "Failed to determine latest Node version" >&2
+            echo "❌  Failed to determine latest Node version" >&2
             exit 1
           fi
 
@@ -87,13 +104,18 @@ jobs:
 
           echo "latest_version=$latest_version" >> "$GITHUB_OUTPUT"
           echo "latest_major=$latest_major" >> "$GITHUB_OUTPUT"
-          echo "Latest Node: version=$latest_version major=$latest_major"
+          echo "✅  Latest Node:        $latest_version"
+          echo "✅  Latest major:       $latest_major"
+          echo ""
 
       - name: Step 3 — Update Dockerfile if newer
         id: update
         shell: bash
         run: |
           set -euo pipefail
+          echo ""
+          echo "🧮  Comparing versions and updating if needed..."
+          echo ""
           current_tag='${{ steps.current.outputs.current_tag }}'
           current_version='${{ steps.current.outputs.current_version }}'
           current_major='${{ steps.current.outputs.current_major }}'
@@ -121,13 +143,13 @@ jobs:
           fi
 
           if [[ "$updated" == "true" ]]; then
-            echo "Updating Dockerfile: $current_tag -> $new_tag"
+            echo "✏️  Updating Dockerfile: $current_tag  →  $new_tag"
             sed -i.bak -E "s/^(ARG NODE_IMAGE=).*/\\1${new_tag}/" Dockerfile
             rm -f Dockerfile.bak
             echo "updated=true" >> "$GITHUB_OUTPUT"
             echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
           else
-            echo "No update needed"
+            echo "ℹ️  No update needed"
             echo "updated=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -136,6 +158,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo ""
+          echo "🚀  Committing and pushing changes to trigger build..."
+          echo ""
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Dockerfile
@@ -146,7 +171,7 @@ jobs:
         if: always()
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            echo "Node base image updated to ${{ steps.update.outputs.new_tag }}."
-            echo "Push to master will trigger Docker image build workflow."
+            echo "\n✅  Node base image updated to ${{ steps.update.outputs.new_tag }}."
+            echo "🧱  Push to master triggers Docker image build workflow.\n"
           else
-            echo "Node base image already up-to-date."
+            echo "\n✅  Node base image already up-to-date.\n"
