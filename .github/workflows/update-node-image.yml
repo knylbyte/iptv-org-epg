@@ -169,6 +169,7 @@ jobs:
 
       - name: Summary
         if: always()
+        shell: bash
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
             printf "\n✅  Node base image updated to %s.\n" "${{ steps.update.outputs.new_tag }}"
