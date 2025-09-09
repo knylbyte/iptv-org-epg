@@ -1,7 +1,8 @@
-# syntax=docker/dockerfile:1
+# --- Global ARGs ---
+ARG NODE_IMAGE=:22-alpine
 
 # --- Builder stage: use local repo and install deps ---
-FROM node:22-alpine AS builder
+FROM node:${NODE_IMAGE} AS builder
 
 WORKDIR /epg
 
@@ -25,7 +26,7 @@ COPY tsconfig.json ./tsconfig.json
 
 
 # --- Runtime stage: minimal files needed to run ---
-FROM node:22-alpine AS runner
+FROM node:${NODE_IMAGE} AS runner
 
 ENV NODE_ENV=production \
     CRON_SCHEDULE="0 0 * * *" \
