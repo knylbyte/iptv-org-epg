@@ -1,5 +1,5 @@
 # --- Global ARGs ---
-ARG NODE_IMAGE=:22-alpine
+ARG NODE_IMAGE=22-alpine
 
 # --- Builder stage: use local repo and install deps ---
 FROM node:${NODE_IMAGE} AS builder
