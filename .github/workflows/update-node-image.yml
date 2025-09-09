@@ -70,7 +70,7 @@ jobs:
           echo "✅  Current major:      ${current_major:-N/A}"
           echo ""
 
-      - name: Step 2 — Latest Node version via curl (with retries)
+      - name: Step 2 — Latest Node tags per architecture (curl with retries)
         id: latest
         shell: bash
         env:
@@ -79,36 +79,84 @@ jobs:
           set -euo pipefail
 
           echo ""
-          echo "🌐  Fetching latest Node version..."
+          echo "🌐  Fetching latest Node alpine tags per architecture..."
           echo ""
 
-          latest_version=$(
-            curl -fsSL \
-              -H "User-Agent: $UA" \
-              -H "Accept: application/json" \
-              --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
-              "https://nodejs.org/dist/index.json" \
-            | jq -r '.[].version' \
-            | sed 's/^v//' \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V \
-            | tail -1
-          )
+          # Collect candidate tags like "<major>-alpine" (e.g., 24-alpine, 23-alpine ...)
+          tags_raw=""
+          url="https://hub.docker.com/v2/repositories/library/node/tags?page_size=100"
+          for _ in 1 2 3 4 5; do
+            page=$(curl -fsSL -H "User-Agent: $UA" --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors "$url")
+            names=$(echo "$page" | jq -r '.results[].name')
+            tags_raw+=$'\n'"$names"
+            next=$(echo "$page" | jq -r '.next // empty')
+            [[ -n "$next" ]] || break
+            url="$next"
+          done
 
-          if [[ -z "$latest_version" ]]; then
-            echo "❌  Failed to determine latest Node version" >&2
+          candidates=$(echo "$tags_raw" \
+            | grep -E '^[0-9]+-alpine$' \
+            | sed 's/-alpine$//' \
+            | sort -n | tac \
+            | awk '!seen[$0]++' \
+            | sed 's/$/-alpine/')
+
+          if [[ -z "$candidates" ]]; then
+            echo "❌  Could not collect candidate Node alpine tags from Docker Hub" >&2
             exit 1
           fi
 
-          latest_major=${latest_version%%.*}
-
-          echo "latest_version=$latest_version" >> "$GITHUB_OUTPUT"
-          echo "latest_major=$latest_major" >> "$GITHUB_OUTPUT"
-          echo "✅  Latest Node:        $latest_version"
-          echo "✅  Latest major:       $latest_major"
+          echo "🔎  Candidates (descending):"
+          echo "$candidates" | head -20 | sed 's/^/   • /'
           echo ""
 
-      - name: Step 3 — Update Dockerfile if newer
+          # Helper to check tag supports an architecture
+          supports_arch() {
+            local tag="$1" arch="$2"
+            local json
+            json=$(curl -fsSL -H "User-Agent: $UA" --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
+                   "https://hub.docker.com/v2/repositories/library/node/tags/${tag}") || return 1
+            case "$arch" in
+              amd64)
+                echo "$json" | jq -e '.images[] | select(.os=="linux" and .architecture=="amd64")' >/dev/null 2>&1 ;;
+              arm64)
+                echo "$json" | jq -e '.images[] | select(.os=="linux" and .architecture=="arm64")' >/dev/null 2>&1 ;;
+              armv7)
+                echo "$json" | jq -e '.images[] | select(.os=="linux" and .architecture=="arm" and ((.variant // "") | ascii_downcase)=="v7")' >/dev/null 2>&1 ;;
+              *) return 1;;
+            esac
+          }
+
+          amd64_tag=""; arm64_tag=""; armv7_tag=""
+          while IFS= read -r tag; do
+            [[ -z "$amd64_tag" ]] && supports_arch "$tag" amd64 && amd64_tag="$tag"
+            [[ -z "$arm64_tag" ]] && supports_arch "$tag" arm64 && arm64_tag="$tag"
+            [[ -z "$armv7_tag" ]] && supports_arch "$tag" armv7 && armv7_tag="$tag"
+            [[ -n "$amd64_tag" && -n "$arm64_tag" && -n "$armv7_tag" ]] && break || true
+          done <<< "$candidates"
+
+          if [[ -z "$amd64_tag" || -z "$arm64_tag" || -z "$armv7_tag" ]]; then
+            echo "❌  Failed to find per-arch tags: amd64='$amd64_tag' arm64='$arm64_tag' armv7='$armv7_tag'" >&2
+            exit 1
+          fi
+
+          amd64_major=${amd64_tag%%-*}
+          arm64_major=${arm64_tag%%-*}
+          armv7_major=${armv7_tag%%-*}
+
+          echo "amd64_tag=$amd64_tag" >> "$GITHUB_OUTPUT"
+          echo "arm64_tag=$arm64_tag" >> "$GITHUB_OUTPUT"
+          echo "armv7_tag=$armv7_tag" >> "$GITHUB_OUTPUT"
+          echo "amd64_major=$amd64_major" >> "$GITHUB_OUTPUT"
+          echo "arm64_major=$arm64_major" >> "$GITHUB_OUTPUT"
+          echo "armv7_major=$armv7_major" >> "$GITHUB_OUTPUT"
+
+          echo "✅  Latest amd64 tag:   $amd64_tag"
+          echo "✅  Latest arm64 tag:   $arm64_tag"
+          echo "✅  Latest armv7 tag:   $armv7_tag"
+          echo ""
+
+      - name: Step 3 — Update Dockerfile and build workflow if newer
         id: update
         shell: bash
         run: |
@@ -116,40 +164,50 @@ jobs:
           echo ""
           echo "🧮  Comparing versions and updating if needed..."
           echo ""
+          # Use amd64 tag as default for Dockerfile
+          amd64_tag='${{ steps.latest.outputs.amd64_tag }}'
+          arm64_tag='${{ steps.latest.outputs.arm64_tag }}'
+          armv7_tag='${{ steps.latest.outputs.armv7_tag }}'
+
+          updated=false
+
+          # 3a) Update Dockerfile default ARG to amd64 tag if changed
           current_tag='${{ steps.current.outputs.current_tag }}'
-          current_version='${{ steps.current.outputs.current_version }}'
-          current_major='${{ steps.current.outputs.current_major }}'
-          latest_version='${{ steps.latest.outputs.latest_version }}'
-          latest_major='${{ steps.latest.outputs.latest_major }}'
-
-          new_tag=""
-          updated="false"
-
-          if [[ -n "$current_version" ]]; then
-            # Full semver currently in use; compare semver (natural sort)
-            max=$(printf '%s\n%s\n' "$current_version" "$latest_version" | sort -V | tail -1)
-            if [[ "$max" == "$latest_version" && "$latest_version" != "$current_version" ]]; then
-              new_tag="${latest_version}-alpine"
-              updated="true"
-            fi
+          if [[ "$current_tag" != "$amd64_tag" ]]; then
+            echo "✏️  Updating Dockerfile: $current_tag  →  $amd64_tag"
+            sed -i.bak -E "s/^(ARG NODE_IMAGE=).*/\\1${amd64_tag}/" Dockerfile
+            rm -f Dockerfile.bak
+            updated=true
           else
-            # Only major currently in use; compare majors
-            if [[ -n "$current_major" && "$latest_major" =~ ^[0-9]+$ && "$current_major" =~ ^[0-9]+$ ]]; then
-              if (( latest_major > current_major )); then
-                new_tag="${latest_major}-alpine"
-                updated="true"
-              fi
-            fi
+            echo "ℹ️  Dockerfile already uses amd64 tag ($amd64_tag)"
           fi
 
-          if [[ "$updated" == "true" ]]; then
-            echo "✏️  Updating Dockerfile: $current_tag  →  $new_tag"
-            sed -i.bak -E "s/^(ARG NODE_IMAGE=).*/\\1${new_tag}/" Dockerfile
-            rm -f Dockerfile.bak
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-            echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
+          # 3b) Update per-arch node_image values in build workflow
+          WF=.github/workflows/fetch-upstream-and-rebuild.yml
+          awk -v a="$amd64_tag" -v b="$arm64_tag" -v c="$armv7_tag" '
+            BEGIN{section=""}
+            /- platform: linux\/amd64/ { section="amd64" }
+            /- platform: linux\/arm64/ { section="arm64" }
+            /- platform: linux\/arm\/v7/ { section="armv7" }
+            section=="amd64" && $1=="node_image:" { print "            node_image: " a; next }
+            section=="arm64" && $1=="node_image:" { print "            node_image: " b; next }
+            section=="armv7" && $1=="node_image:" { print "            node_image: " c; next }
+            { print }
+          ' "$WF" > "$WF.tmp"
+
+          if ! cmp -s "$WF" "$WF.tmp"; then
+            mv "$WF.tmp" "$WF"
+            echo "✏️  Updated per-arch node_image in $WF"
+            updated=true
           else
-            echo "ℹ️  No update needed"
+            rm -f "$WF.tmp"
+            echo "ℹ️  Build workflow already up-to-date"
+          fi
+
+          if [[ "$updated" == true ]]; then
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            echo "new_tag=$amd64_tag" >> "$GITHUB_OUTPUT"
+          else
             echo "updated=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -163,8 +221,8 @@ jobs:
           echo ""
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Dockerfile
-          git commit -m "chore(docker): bump NODE_IMAGE to ${{ steps.update.outputs.new_tag }}"
+          git add Dockerfile .github/workflows/fetch-upstream-and-rebuild.yml
+          git commit -m "chore(docker): bump NODE_IMAGE to ${{ steps.update.outputs.new_tag }} and update per-arch matrix"
           git push
 
       - name: Summary
