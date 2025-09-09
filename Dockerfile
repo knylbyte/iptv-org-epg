@@ -15,15 +15,16 @@ ENV NODE_ENV=production \
 COPY package*.json ./
 
 # Install only production deps, skip lifecycle scripts
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
-  || npm install --omit=dev --ignore-scripts --no-audit --no-fund
+RUN npm ci --omit=dev --no-audit --no-fund
 
 # Copy only runtime-relevant sources
 COPY scripts ./scripts
 COPY sites ./sites
 COPY pm2.config.js ./pm2.config.js
 COPY tsconfig.json ./tsconfig.json
+COPY package.json ./package.json
 
+RUN npm run api:load
 
 # --- Runtime stage: minimal files needed to run ---
 FROM node:${NODE_IMAGE} AS runner
@@ -47,9 +48,11 @@ COPY --from=builder /epg/sites ./sites
 COPY --from=builder /epg/package.json ./package.json
 COPY --from=builder /epg/tsconfig.json ./tsconfig.json
 COPY --from=builder /epg/pm2.config.js ./pm2.config.js
+COPY --from=builder /epg/temp ./temp
 
-# Static files directory served by the app
-RUN mkdir -p /epg/public && chown -R node:node /epg
+# Ensure writable dirs for node and PM2
+RUN mkdir -p /epg/public /epg/.pm2 /home/node \
+ && chown -R node:node /epg /home/node
 
 EXPOSE 3000
 
@@ -57,4 +60,4 @@ EXPOSE 3000
 USER node
 
 # Use local pm2 from node_modules to avoid global installs
-CMD [ "./node_modules/.bin/pm2-runtime", "pm2.config.js" ]
+CMD [ "./node_modules/.bin/pm2-runtime", "--home", "/epg/.pm2", "pm2.config.js" ]
