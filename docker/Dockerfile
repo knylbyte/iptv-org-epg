@@ -15,11 +15,11 @@ ARG CHRONOS_VER
 
 RUN apk update \
  && apk upgrade \
- && apk add --no-cache tzdata
+ && apk add --no-cache tzdata ca-certificates
 
 RUN npm install -g npm@latest
 
-RUN mkdir -p /epg/public
+RUN mkdir -p /epg/public /_stash
 
 WORKDIR /epg
 
