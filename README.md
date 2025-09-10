@@ -197,8 +197,8 @@ iptv-org/epg
 | --------------- | ------------------------------------------------------------------------------------------------------------------ |
 | CRON_SCHEDULE   | A [cron expression](https://crontab.guru/) describing the schedule of the guide loadings (default: "0 0 \* \* \*") |
 | MAX_CONNECTIONS | Limit on the number of concurrent requests (default: 1)                                                            |
-| SITE            | Specific website from SITES.md (default: empty)                                                                    |
-| CLANG           | Language filter (ISO 639-1 codes, e.g., "en,es")                                                                   |
+| SITE            | Specific website from SITES.md (default: empty) (default: undefined)                                               |
+| CLANG           | Language filter (ISO 639-1 codes, e.g., "en,es") (default: undefined)                                              |
 | GZIP            | Boolean value indicating whether to create a compressed version of the guide (default: false)                      |
 | CURL            | Display each request as CURL (default: false)                                                                      |
 | PROXY           | Use the specified proxy                                                                                            |
