@@ -13,6 +13,10 @@ permissions:
   contents: write
   packages: write
 
+concurrency:
+  group: docker-build
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
