@@ -65,7 +65,7 @@ jobs:
           tags: |
             ${{ env.IMAGE }}:${{ matrix.tag_suffix }}
           build-args: |
-            NODE_VERSION=${{ matrix.node_version }}
+            node_version=${{ matrix.node_version }}
           cache-from: |
             type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.tag_suffix }}
           cache-to: |
