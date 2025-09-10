@@ -13,6 +13,7 @@ services:
     environment:
       TZ: America/Chicago          # time zone for correct scheduling
       CRON_SCHEDULE: "0 2 * * *"   # daily 2:00 a.m.
+      PORT: 3000                   # port for web server
       RUN_AT_STARTUP: "true"       # execute once directly at startup
       MAX_CONNECTIONS: 1           # performance/output options (supported by the grabber)
       GZIP: "false"                # additionally generate guide.xml.gz if "true"
@@ -23,6 +24,10 @@ services:
       # CURL: "true"                # output requests as curl
 
       #Select source: Either SITE (preferred) or channels.xml (see Volume above)
-      # SITE: "example"             # folder name in ./sites/<site>/*.channels.xml
-      # CLANG: "en"                 # language filter (ISO 639-1 codes, e.g., "en,es")
+      # SITE: |                     # folder name in ./sites/<site>/*.channels.xml
+      #  "example.com"
+      #  "epg.io"
+      # CLANG: |                    # language filter (ISO 639-1 codes, e.g., "en,es")
+      #  "en"
+      #  "ar"
 
