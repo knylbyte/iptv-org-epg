@@ -28,10 +28,22 @@
 // - No shell in distroless. Everything runs via /nodejs/bin/node.
 // - If SITE or CLANG is empty, we fall back to /epg/channels.xml (must be bind-mounted).
 
-const NODE       = '/nodejs/bin/node';
-const SERVE_JS   = 'node_modules/serve/bin/serve.js';
-const CHRONOS_JS = 'node_modules/@freearhey/chronos/dist/cli.js';
-const TSX_JS     = 'node_modules/tsx/dist/cli.js';
+const path = require('path');
+
+function resolveBin(pkgName, binName) {
+  const pkg = require(`${pkgName}/package.json`);
+  // bin can be a string or an object
+  const binRel = (typeof pkg.bin === 'string') ? pkg.bin : pkg.bin?.[binName];
+  if (!binRel) throw new Error(`Cannot find bin '${binName}' in ${pkgName}/package.json`);
+  return require.resolve(`${pkgName}/${binRel}`);
+}
+
+const NODE = '/nodejs/bin/node'; // Distroless Node entrypoint
+const SERVE_JS   = resolveBin('serve', 'serve');                
+const CHRONOS_JS = resolveBin('@freearhey/chronos', 'chronos'); 
+const TSX_JS     = resolveBin('tsx', 'tsx');                    
+
+
 
 const envBool = (v, def = false) => {
   if (v === undefined) return def;
