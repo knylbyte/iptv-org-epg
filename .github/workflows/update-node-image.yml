@@ -23,89 +23,53 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Ensure jq installed
-        run: |
-          if ! command -v jq >/dev/null 2>&1; then
-            sudo apt-get update -y
-            sudo apt-get install -y jq
-          fi
-
       - name: Step 1 — Current version from Dockerfile
         id: current
         shell: bash
         run: |
           set -euo pipefail
-
           echo ""
           echo "🔎  Reading current version from Dockerfile..."
           echo ""
-
           current_tag=$(sed -n 's/^ARG NODE_VERSION=\(.*\)$/\1/p' docker/Dockerfile)
           if [[ -z "$current_tag" ]]; then
-            echo "❌  Could not find current NODE_VERSION in Dockerfile" >&2
+            echo "❌  Could not find current NODE_VERSION in docker/Dockerfile" >&2
             exit 1
           fi
-
-          # Extract full semver prefix if present (e.g. 22.9.0 from 22.9.0-alpine)
           semver_prefix=$(echo "$current_tag" | cut -d'-' -f1)
           if [[ "$semver_prefix" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            current_version="$semver_prefix"
-          else
-            current_version=""
-          fi
-
-          # Extract major (prefer from semver; else from tag start)
-          if [[ -n "${current_version}" ]]; then
-            current_major=${current_version%%.*}
+            current_major=${semver_prefix%%.*}
           else
             current_major=$(echo "$current_tag" | sed -n 's/^\([0-9][0-9]*\).*$/\1/p')
           fi
-
           echo "current_tag=$current_tag" >> "$GITHUB_OUTPUT"
-          echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
           echo "current_major=$current_major" >> "$GITHUB_OUTPUT"
-
-          echo "✅  Current tag:        $current_tag"
-          echo "✅  Current semver:     ${current_version:-N/A}"
-          echo "✅  Current major:      ${current_major:-N/A}"
+          echo "✅  Current tag:   $current_tag"
+          echo "✅  Current major: ${current_major:-N/A}"
           echo ""
 
-      - name: Step 2 — Latest Node version via curl (with retries)
+      - name: Step 2 — Latest Node major from Distroless
         id: latest
         shell: bash
         env:
           UA: NodeImageUpdater (+github.com/${{ github.repository }})
         run: |
           set -euo pipefail
-
           echo ""
-          echo "🌐  Fetching latest Node version..."
+          echo "🌐  Fetching latest distroless Node major..."
           echo ""
-
-          latest_version=$(
-            curl -fsSL \
-              -H "User-Agent: $UA" \
-              -H "Accept: application/json" \
-              --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
-              "https://nodejs.org/dist/index.json" \
-            | jq -r '.[].version' \
-            | sed 's/^v//' \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
-            | sort -V \
-            | tail -1
-          )
-
-          if [[ -z "$latest_version" ]]; then
-            echo "❌  Failed to determine latest Node version" >&2
+          readme_url="https://raw.githubusercontent.com/GoogleContainerTools/distroless/main/README.md"
+          content="$(curl -fsSL -H "User-Agent: $UA" --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors "$readme_url")"
+          latest_major="$(printf '%s\n' "$content" \
+            | grep -Eo 'nodejs[0-9]+-debian[0-9]+' \
+            | sed -E 's/^nodejs([0-9]+)-.*/\1/' \
+            | sort -n | uniq | tail -1)"
+          if [[ -z "${latest_major:-}" ]]; then
+            echo "❌  Failed to parse latest Node major from Distroless README" >&2
             exit 1
           fi
-
-          latest_major=${latest_version%%.*}
-
-          echo "latest_version=$latest_version" >> "$GITHUB_OUTPUT"
           echo "latest_major=$latest_major" >> "$GITHUB_OUTPUT"
-          echo "✅  Latest Node:        $latest_version"
-          echo "✅  Latest major:       $latest_major"
+          echo "✅  Latest distroless Node major: $latest_major"
           echo ""
 
       - name: Step 3 — Update Dockerfile if newer
@@ -116,39 +80,31 @@ jobs:
           echo ""
           echo "🧮  Comparing versions and updating if needed..."
           echo ""
-          current_tag='${{ steps.current.outputs.current_tag }}'
-          current_version='${{ steps.current.outputs.current_version }}'
+          file="docker/Dockerfile"
           current_major='${{ steps.current.outputs.current_major }}'
-          latest_version='${{ steps.latest.outputs.latest_version }}'
           latest_major='${{ steps.latest.outputs.latest_major }}'
-
-          new_tag=""
           updated="false"
 
-          if [[ -n "$current_version" ]]; then
-            # Full semver currently in use; compare semver (natural sort)
-            max=$(printf '%s\n%s\n' "$current_version" "$latest_version" | sort -V | tail -1)
-            if [[ "$max" == "$latest_version" && "$latest_version" != "$current_version" ]]; then
-              new_tag="${latest_version}-alpine"
-              updated="true"
-            fi
-          else
-            # Only major currently in use; compare majors
-            if [[ -n "$current_major" && "$latest_major" =~ ^[0-9]+$ && "$current_major" =~ ^[0-9]+$ ]]; then
-              if (( latest_major > current_major )); then
-                new_tag="${latest_major}-alpine"
-                updated="true"
-              fi
+          if [[ "$current_major" =~ ^[0-9]+$ && "$latest_major" =~ ^[0-9]+$ ]]; then
+            if (( latest_major > current_major )); then
+              echo "✏️  Updating $file to Node $latest_major"
+
+              # ARG NODE_VERSION=MAJOR
+              sed -i.bak -E "s/^(ARG NODE_VERSION=).*/\\1${latest_major}/" "$file"
+
+              # FROM node:${NODE_VERSION:-<N>}-alpine AS builder
+              sed -i.bak -E "s|(FROM[[:space:]]+node:\$\{NODE_VERSION:-)[0-9]+(\}-alpine[[:space:]]+AS[[:space:]]+builder)|\1${latest_major}\2|" "$file"
+
+              # FROM gcr.io/distroless/nodejs${NODE_VERSION:-<N>} AS runner
+              sed -i.bak -E "s|(FROM[[:space:]]+gcr\.io/distroless/nodejs\$\{NODE_VERSION:-)[0-9]+(\}[[:space:]]+AS[[:space:]]+runner)|\1${latest_major}\2|" "$file"
+
+              rm -f "${file}.bak"
+              echo "updated=true" >> "$GITHUB_OUTPUT"
+              echo "new_value=$latest_major" >> "$GITHUB_OUTPUT"
             fi
           fi
 
-          if [[ "$updated" == "true" ]]; then
-            echo "✏️  Updating Dockerfile: $current_tag  →  $new_tag"
-            sed -i.bak -E "s/^(ARG NODE_VERSION=).*/\\1${new_tag}/" docker/Dockerfile
-            rm -f Dockerfile.bak
-            echo "updated=true" >> "$GITHUB_OUTPUT"
-            echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
-          else
+          if [[ "${updated}" != "true" ]]; then
             echo "ℹ️  No update needed"
             echo "updated=false" >> "$GITHUB_OUTPUT"
           fi
@@ -163,16 +119,16 @@ jobs:
           echo ""
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add Dockerfile
-          git commit -m "chore(docker): bump NODE_VERSION to ${{ steps.update.outputs.new_tag }}"
+          git add docker/Dockerfile
+          git commit -m "chore(docker): bump NODE_VERSION and FROM defaults to ${{ steps.update.outputs.new_value }} (distroless)"
           git push
 
       - name: Summary
         if: always()
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            printf "\n✅  Node base image updated to %s.\n" "${{ steps.update.outputs.new_tag }}"
-            printf "🧱  Push to master triggers Docker image build workflow.\n\n"
+            printf "\n✅  Updated to Node %s and refreshed FROM defaults.\n" "${{ steps.update.outputs.new_value }}"
+            printf "🧱  Push triggers your Docker build workflow.\n\n"
           else
             printf "\n✅  Node base image already up-to-date.\n\n"
           fi
