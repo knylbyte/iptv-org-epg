@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: write
-  pull-requests: write
 
 concurrency:
   group: update-node-image
@@ -71,7 +70,7 @@ jobs:
           echo "✅  Current major:      ${current_major:-N/A}"
           echo ""
 
-      - name: Step 2 — Latest Node tags per architecture (curl with retries)
+      - name: Step 2 — Latest Node version via curl (with retries)
         id: latest
         shell: bash
         env:
@@ -80,72 +79,36 @@ jobs:
           set -euo pipefail
 
           echo ""
-          echo "🌐  Fetching latest Node alpine tags per architecture..."
+          echo "🌐  Fetching latest Node version..."
           echo ""
-          # Aggregate a few pages from Docker Hub tags API and compute per-arch latest N-alpine
-          tmp=$(mktemp)
-          echo '[]' > "$tmp"
 
-          url="https://hub.docker.com/v2/repositories/library/node/tags?page_size=100"
-          for page_idx in 1 2 3; do
-            page=$(curl -fsSL -H "User-Agent: $UA" --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors "$url")
-            # Merge results arrays
-            jq -cs '.[0] + .[1]' "$tmp" <(echo "$page" | jq '.results') > "$tmp.new"
-            mv "$tmp.new" "$tmp"
-            next=$(echo "$page" | jq -r '.next // empty')
-            [[ -n "$next" ]] || break
-            url="$next"
-          done
+          latest_version=$(
+            curl -fsSL \
+              -H "User-Agent: $UA" \
+              -H "Accept: application/json" \
+              --retry 3 --retry-delay 2 --retry-connrefused --retry-all-errors \
+              "https://nodejs.org/dist/index.json" \
+            | jq -r '.[].version' \
+            | sed 's/^v//' \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | tail -1
+          )
 
-          # Compute latest N-alpine per architecture using the aggregated results
-          amd64_tag=$(jq -r '
-            [ .[]
-              | select((.name|test("^[0-9]+-alpine$")) and (any(.images[]?; .os=="linux" and .architecture=="amd64")))
-              | { name, major: ((.name | sub("-alpine$"; "") | tonumber)) }
-            ]
-            | if length>0 then (max_by(.major) | .name) else empty end
-          ' "$tmp")
-
-          arm64_tag=$(jq -r '
-            [ .[]
-              | select((.name|test("^[0-9]+-alpine$")) and (any(.images[]?; .os=="linux" and .architecture=="arm64")))
-              | { name, major: ((.name | sub("-alpine$"; "") | tonumber)) }
-            ]
-            | if length>0 then (max_by(.major) | .name) else empty end
-          ' "$tmp")
-
-          armv7_tag=$(jq -r '
-            [ .[]
-              | select((.name|test("^[0-9]+-alpine$")) and (any(.images[]?; .os=="linux" and .architecture=="arm" and ((.variant // "") | ascii_downcase)=="v7")))
-              | { name, major: ((.name | sub("-alpine$"; "") | tonumber)) }
-            ]
-            | if length>0 then (max_by(.major) | .name) else empty end
-          ' "$tmp")
-
-          rm -f "$tmp" || true
-
-          if [[ -z "$amd64_tag" || -z "$arm64_tag" || -z "$armv7_tag" ]]; then
-            echo "❌  Failed to find per-arch tags: amd64='$amd64_tag' arm64='$arm64_tag' armv7='$armv7_tag'" >&2
+          if [[ -z "$latest_version" ]]; then
+            echo "❌  Failed to determine latest Node version" >&2
             exit 1
           fi
 
-          amd64_major=${amd64_tag%%-*}
-          arm64_major=${arm64_tag%%-*}
-          armv7_major=${armv7_tag%%-*}
+          latest_major=${latest_version%%.*}
 
-          echo "amd64_tag=$amd64_tag" >> "$GITHUB_OUTPUT"
-          echo "arm64_tag=$arm64_tag" >> "$GITHUB_OUTPUT"
-          echo "armv7_tag=$armv7_tag" >> "$GITHUB_OUTPUT"
-          echo "amd64_major=$amd64_major" >> "$GITHUB_OUTPUT"
-          echo "arm64_major=$arm64_major" >> "$GITHUB_OUTPUT"
-          echo "armv7_major=$armv7_major" >> "$GITHUB_OUTPUT"
-
-          echo "✅  Latest amd64 tag:   $amd64_tag"
-          echo "✅  Latest arm64 tag:   $arm64_tag"
-          echo "✅  Latest armv7 tag:   $armv7_tag"
+          echo "latest_version=$latest_version" >> "$GITHUB_OUTPUT"
+          echo "latest_major=$latest_major" >> "$GITHUB_OUTPUT"
+          echo "✅  Latest Node:        $latest_version"
+          echo "✅  Latest major:       $latest_major"
           echo ""
 
-      - name: Step 3 — Update Dockerfile and build workflow if newer
+      - name: Step 3 — Update Dockerfile if newer
         id: update
         shell: bash
         run: |
@@ -153,61 +116,45 @@ jobs:
           echo ""
           echo "🧮  Comparing versions and updating if needed..."
           echo ""
-          # Use amd64 tag as default for Dockerfile
-          amd64_tag='${{ steps.latest.outputs.amd64_tag }}'
-          arm64_tag='${{ steps.latest.outputs.arm64_tag }}'
-          armv7_tag='${{ steps.latest.outputs.armv7_tag }}'
-
-          updated=false
-          dockerfile_changed=false
-          workflow_changed=false
-
-          # 3a) Update Dockerfile default ARG to amd64 tag if changed
           current_tag='${{ steps.current.outputs.current_tag }}'
-          if [[ "$current_tag" != "$amd64_tag" ]]; then
-            echo "✏️  Updating Dockerfile: $current_tag  →  $amd64_tag"
-            sed -i.bak -E "s/^(ARG NODE_IMAGE=).*/\\1${amd64_tag}/" Dockerfile
+          current_version='${{ steps.current.outputs.current_version }}'
+          current_major='${{ steps.current.outputs.current_major }}'
+          latest_version='${{ steps.latest.outputs.latest_version }}'
+          latest_major='${{ steps.latest.outputs.latest_major }}'
+
+          new_tag=""
+          updated="false"
+
+          if [[ -n "$current_version" ]]; then
+            # Full semver currently in use; compare semver (natural sort)
+            max=$(printf '%s\n%s\n' "$current_version" "$latest_version" | sort -V | tail -1)
+            if [[ "$max" == "$latest_version" && "$latest_version" != "$current_version" ]]; then
+              new_tag="${latest_version}-alpine"
+              updated="true"
+            fi
+          else
+            # Only major currently in use; compare majors
+            if [[ -n "$current_major" && "$latest_major" =~ ^[0-9]+$ && "$current_major" =~ ^[0-9]+$ ]]; then
+              if (( latest_major > current_major )); then
+                new_tag="${latest_major}-alpine"
+                updated="true"
+              fi
+            fi
+          fi
+
+          if [[ "$updated" == "true" ]]; then
+            echo "✏️  Updating Dockerfile: $current_tag  →  $new_tag"
+            sed -i.bak -E "s/^(ARG NODE_IMAGE=).*/\\1${new_tag}/" Dockerfile
             rm -f Dockerfile.bak
-            updated=true
-            dockerfile_changed=true
-          else
-            echo "ℹ️  Dockerfile already uses amd64 tag ($amd64_tag)"
-          fi
-
-          # 3b) Update per-arch node_image values in build workflow
-          WF=.github/workflows/fetch-upstream-and-rebuild.yml
-          awk -v a="$amd64_tag" -v b="$arm64_tag" -v c="$armv7_tag" '
-            BEGIN{section=""}
-            /- platform: linux\/amd64/ { section="amd64" }
-            /- platform: linux\/arm64/ { section="arm64" }
-            /- platform: linux\/arm\/v7/ { section="armv7" }
-            section=="amd64" && $1=="node_image:" { print "            node_image: " a; next }
-            section=="arm64" && $1=="node_image:" { print "            node_image: " b; next }
-            section=="armv7" && $1=="node_image:" { print "            node_image: " c; next }
-            { print }
-          ' "$WF" > "$WF.tmp"
-
-          if ! cmp -s "$WF" "$WF.tmp"; then
-            mv "$WF.tmp" "$WF"
-            echo "✏️  Updated per-arch node_image in $WF"
-            updated=true
-            workflow_changed=true
-          else
-            rm -f "$WF.tmp"
-            echo "ℹ️  Build workflow already up-to-date"
-          fi
-
-          if [[ "$updated" == true ]]; then
             echo "updated=true" >> "$GITHUB_OUTPUT"
-            echo "new_tag=$amd64_tag" >> "$GITHUB_OUTPUT"
+            echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
           else
+            echo "ℹ️  No update needed"
             echo "updated=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "dockerfile_changed=$dockerfile_changed" >> "$GITHUB_OUTPUT"
-          echo "workflow_changed=$workflow_changed" >> "$GITHUB_OUTPUT"
 
-      - name: Step 4a — Commit and push directly (no workflow file changed)
-        if: steps.update.outputs.updated == 'true' && steps.update.outputs.workflow_changed != 'true'
+      - name: Step 4 — Commit and push (triggers build workflow)
+        if: steps.update.outputs.updated == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -220,96 +167,12 @@ jobs:
           git commit -m "chore(docker): bump NODE_IMAGE to ${{ steps.update.outputs.new_tag }}"
           git push
 
-      - name: Step 4b — Open PR for workflow changes
-        if: steps.update.outputs.updated == 'true' && steps.update.outputs.workflow_changed == 'true'
-        id: cpr
-        uses: peter-evans/create-pull-request@v6
-        with:
-          commit-message: |
-            chore(ci): update per-arch node_image matrix and Dockerfile default to ${{ steps.update.outputs.new_tag }}
-          title: "chore(ci): update node_image matrix and Dockerfile to ${{ steps.update.outputs.new_tag }}"
-          body: |
-            This PR updates:
-            - Dockerfile default `ARG NODE_IMAGE` to `${{ steps.update.outputs.new_tag }}` (amd64 baseline)
-            - Per-arch `node_image` values in the build matrix
-
-            Once merged to `master`, it will trigger the Docker image rebuild workflow.
-          branch: ci/bump-node-image-${{ steps.update.outputs.new_tag }}
-          delete-branch: true
-
-      - name: Step 4c — Enable PR auto-merge (squash)
-        if: steps.update.outputs.updated == 'true' && steps.update.outputs.workflow_changed == 'true'
-        uses: peter-evans/enable-pull-request-automerge@v3
-        continue-on-error: true
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          pull-request-number: ${{ steps.cpr.outputs.pull-request-number }}
-          merge-method: squash
-
-      - name: Step 4d — Wait for checks and merge PR (squash)
-        if: steps.update.outputs.updated == 'true' && steps.update.outputs.workflow_changed == 'true'
-        env:
-          GH_REPO: ${{ github.repository }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo ""
-          echo "⏳  Waiting for checks to pass, then merging PR #${PR_NUMBER}..."
-          echo ""
-
-          max_attempts=240 # ~2h at 30s interval
-          attempt=0
-          merged=false
-
-          while [[ $attempt -lt $max_attempts ]]; do
-            attempt=$((attempt+1))
-            printf "Attempt %d: trying to merge PR #%s...\n" "$attempt" "$PR_NUMBER"
-
-            status=$(curl -sS -o /tmp/merge.json -w '%{http_code}' \
-              -X PUT \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/merge" \
-              -d '{"merge_method":"squash"}') || status=000
-
-            if [[ "$status" == "200" ]]; then
-              echo ""
-              echo "✅  PR merged successfully."
-              merged=true
-              break
-            fi
-
-            echo "ℹ️  Merge not yet possible (HTTP $status)."
-            cat /tmp/merge.json || true
-
-            # 405/409 are typical for not mergeable yet, retry later
-            if [[ "$status" == "405" || "$status" == "409" || "$status" == "202" ]]; then
-              sleep 30
-              continue
-            fi
-
-            echo "❌  Unexpected error while attempting to merge (HTTP $status)."
-            exit 1
-          done
-
-          if [[ "$merged" != true ]]; then
-            echo "❌  Timed out waiting to merge PR. Please merge manually: https://github.com/${GH_REPO}/pull/${PR_NUMBER}"
-            exit 1
-          fi
-
       - name: Summary
         if: always()
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            if [[ "${{ steps.update.outputs.workflow_changed }}" == "true" ]]; then
-              printf "\n✅  Changes prepared. Opened PR to update workflow matrix and Dockerfile.\n"
-              printf "🔗  %s\n\n" "${{ steps.cpr.outputs.pull-request-url }}"
-            else
-              printf "\n✅  Node base image updated to %s.\n" "${{ steps.update.outputs.new_tag }}"
-              printf "🧱  Push to master triggers Docker image build workflow.\n\n"
-            fi
+            printf "\n✅  Node base image updated to %s.\n" "${{ steps.update.outputs.new_tag }}"
+            printf "🧱  Push to master triggers Docker image build workflow.\n\n"
           else
             printf "\n✅  Node base image already up-to-date.\n\n"
           fi
