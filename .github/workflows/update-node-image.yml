@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   update:
-    name: Check and Bump NODE_IMAGE
+    name: Check and Bump NODE_VERSION
     runs-on: ubuntu-latest
 
     steps:
@@ -40,9 +40,9 @@ jobs:
           echo "🔎  Reading current version from Dockerfile..."
           echo ""
 
-          current_tag=$(sed -n 's/^ARG NODE_IMAGE=\(.*\)$/\1/p' Dockerfile)
+          current_tag=$(sed -n 's/^ARG NODE_VERSION=\(.*\)$/\1/p' docker/Dockerfile)
           if [[ -z "$current_tag" ]]; then
-            echo "❌  Could not find current NODE_IMAGE in Dockerfile" >&2
+            echo "❌  Could not find current NODE_VERSION in Dockerfile" >&2
             exit 1
           fi
 
@@ -144,7 +144,7 @@ jobs:
 
           if [[ "$updated" == "true" ]]; then
             echo "✏️  Updating Dockerfile: $current_tag  →  $new_tag"
-            sed -i.bak -E "s/^(ARG NODE_IMAGE=).*/\\1${new_tag}/" Dockerfile
+            sed -i.bak -E "s/^(ARG NODE_VERSION=).*/\\1${new_tag}/" docker/Dockerfile
             rm -f Dockerfile.bak
             echo "updated=true" >> "$GITHUB_OUTPUT"
             echo "new_tag=$new_tag" >> "$GITHUB_OUTPUT"
@@ -164,7 +164,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add Dockerfile
-          git commit -m "chore(docker): bump NODE_IMAGE to ${{ steps.update.outputs.new_tag }}"
+          git commit -m "chore(docker): bump NODE_VERSION to ${{ steps.update.outputs.new_tag }}"
           git push
 
       - name: Summary
