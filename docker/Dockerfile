@@ -8,6 +8,11 @@ ARG CHRONOS_VER=1.3.0
 # --- Builder stage: use local repo and install deps ---
 FROM node:${NODE_VERSION}-alpine AS builder
 
+ARG PM2_VER
+ARG SERVE_VER
+ARG TSX_VER
+ARG CHRONOS_VER
+
 RUN apk update \
  && apk upgrade \
  && apk add --no-cache tzdata
