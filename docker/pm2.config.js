@@ -43,8 +43,6 @@ const SERVE_JS   = resolveBin('serve', 'serve');
 const CHRONOS_JS = resolveBin('@freearhey/chronos', 'chronos'); 
 const TSX_JS     = resolveBin('tsx', 'tsx');                    
 
-
-
 const envBool = (v, def = false) => {
   if (v === undefined) return def;
   const s = String(v).trim().toLowerCase();
