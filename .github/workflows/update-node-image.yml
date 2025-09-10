@@ -99,7 +99,7 @@ jobs:
               sed -i.bak -E "s|(FROM[[:space:]]+gcr\.io/distroless/nodejs\$\{NODE_VERSION:-)[0-9]+(\}[[:space:]]+AS[[:space:]]+runner)|\1${latest_major}\2|" "$file"
 
               rm -f "${file}.bak"
-              echo "updated=true" >> "$GITHUB_OUTPUT"
+              updated="true"
               echo "new_value=$latest_major" >> "$GITHUB_OUTPUT"
             fi
           fi
@@ -107,6 +107,8 @@ jobs:
           if [[ "${updated}" != "true" ]]; then
             echo "ℹ️  No update needed"
             echo "updated=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Step 4 — Commit and push (triggers build workflow)
