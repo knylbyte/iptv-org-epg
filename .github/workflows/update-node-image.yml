@@ -1,4 +1,4 @@
-name: Update Node Image Tag
+name: Update Default Node Version
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: update-node-image
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   update:
