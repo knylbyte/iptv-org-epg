@@ -181,6 +181,7 @@ docker run \
 -p 5000:3000 \
 -v /path/to/channels.xml:/epg/channels.xml \
 -e CRON_SCHEDULE="0 0,12 * * *" \
+-e PORT=3000 \
 -e MAX_CONNECTIONS=10 \
 -e SITE=["example.com", "epg.io"] \
 -e CLANG=["en", "es"] \
@@ -196,6 +197,7 @@ iptv-org/epg
 | Variable        | Description                                                                                                        |
 | --------------- | ------------------------------------------------------------------------------------------------------------------ |
 | CRON_SCHEDULE   | A [cron expression](https://crontab.guru/) describing the schedule of the guide loadings (default: "0 0 \* \* \*") |
+| PORT            | Port on which the web server listens (default: 3000)                                                               |
 | MAX_CONNECTIONS | Limit on the number of concurrent requests (default: 1)                                                            |
 | SITE            | Specific website from SITES.md (default: empty) (default: undefined)                                               |
 | CLANG           | Language filter (ISO 639-1 codes, e.g., "en,es") (default: undefined)                                              |
