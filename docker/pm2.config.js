@@ -30,7 +30,7 @@
 
 const NODE       = '/nodejs/bin/node';
 const SERVE_JS   = 'node_modules/serve/bin/serve.js';
-const CHRONOS_JS = 'node_modules/chronos-cli/bin/chronos.js';
+const CHRONOS_JS = 'node_modules/@freearhey/chronos/dist/cli.js';
 const TSX_JS     = 'node_modules/tsx/dist/cli.js';
 
 const envBool = (v, def = false) => {

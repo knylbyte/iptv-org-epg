@@ -3,7 +3,7 @@ ARG NODE_VERSION=24
 ARG PM2_VER=5.4.2
 ARG SERVE_VER=14.2.5
 ARG TSX_VER=4.19.1
-ARG CHRONOS_VER=1.3.0
+ARG CHRONOS_VER=0.0.1
 
 # --- Builder stage: use local repo and install deps ---
 FROM node:${NODE_VERSION}-alpine AS builder
@@ -39,7 +39,7 @@ RUN npm install --no-audit --no-fund --omit=dev --no-save \
     pm2@${PM2_VER} \
     serve@${SERVE_VER} \
     tsx@${TSX_VER} \
-    chronos-cli@${CHRONOS_VER}
+    @freearhey/chronos@${CHRONOS_VER}
 
 # Copy only runtime-relevant sources
 COPY scripts                ./scripts
