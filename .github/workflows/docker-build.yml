@@ -66,10 +66,9 @@ jobs:
             ${{ env.IMAGE }}:${{ matrix.tag_suffix }}
           build-args: |
             NODE_VERSION=${{ matrix.node_version }}
-          cache-from: |
-            type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.tag_suffix }}
-          cache-to: |
-            type=registry,ref=${{ env.IMAGE }}:buildcache-${{ matrix.tag_suffix }},mode=max
+          cache-from: type=gha,scope=epg-${{ matrix.tag_suffix }}
+          cache-to:   type=gha,mode=max,scope=epg-${{ matrix.tag_suffix }}
+
 
   manifest:
     needs: build
@@ -95,10 +94,12 @@ jobs:
           IMAGE="${{ env.IMAGE }}"
           SHORT_SHA="${{ steps.vars.outputs.short_sha }}"
 
-          docker buildx imagetools create -t "${IMAGE}:latest" -t "${IMAGE}:${SHORT_SHA}" \
-            "${IMAGE}:linux-amd64" \
-            "${IMAGE}:linux-arm64" \
-            "${IMAGE}:linux-armv7"
+          docker buildx imagetools create \
+            -t "${IMAGE}:${SHORT_SHA}" \
+            -t "${IMAGE}:latest" \
+              "${IMAGE}:linux-amd64" \
+              "${IMAGE}:linux-arm64" \
+              "${IMAGE}:linux-armv7"
 
       - name: Inspect manifests
         run: |
