@@ -31,11 +31,14 @@
 const path = require('path');
 
 function resolveBin(pkgName, binName) {
-  const pkg = require(`${pkgName}/package.json`);
-  // bin can be a string or an object
-  const binRel = (typeof pkg.bin === 'string') ? pkg.bin : pkg.bin?.[binName];
-  if (!binRel) throw new Error(`Cannot find bin '${binName}' in ${pkgName}/package.json`);
-  return require.resolve(`${pkgName}/${binRel}`);
+  // path to that package.json
+  const pkgJsonPath = require.resolve(`${pkgName}/package.json`);
+  const pkgDir = path.dirname(pkgJsonPath);
+  const pkg = require(pkgJsonPath);
+  const binField = pkg.bin;
+  const rel = (typeof binField === 'string') ? binField : (binField && binField[binName]);
+  if (!rel) throw new Error(`Cannot find bin '${binName}' in ${pkgName}/package.json`);
+  return path.join(pkgDir, rel);
 }
 
 const NODE = '/nodejs/bin/node'; // Distroless Node entrypoint
