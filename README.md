@@ -218,7 +218,7 @@ The container decides which channel list to use in this order:
 if SITE is set:
     → use the built-in site channel lists for the given site(s)
 else if ALL_SITES is truthy:
-    → use the aggregated list of all sites (all.channels.xml)
+    → use the aggregated list of all sites (all.channels.xml) and optionaly filtered by language
 else:
     → use /epg/channels.xml from your bind mount
 ```
