@@ -22,10 +22,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Enforce LF line endings in CI
+      - name: Honor .gitattributes (CRLF policy)
         run: |
+          # Do not fight .gitattributes; avoid extra auto-conversions
           git config --global core.autocrlf false
-          git config --global core.eol lf
+          git config --global core.safecrlf false
+
 
       - name: Install xmllint (libxml2-utils)
         run: |
@@ -140,20 +142,25 @@ jobs:
           source changes.env
           TOTAL_CHANGED=$((ADDED + REMOVED + MODIFIED))
 
-          # Commit only if the file content changed
-          if git diff --quiet -- all.channels.xml 2>/dev/null; then
-            echo "No changes to all.channels.xml — skipping commit."
+          # Convert to CRLF to comply with .gitattributes (* text eol=crlf)
+          # Robust: first strip any CR, then write CRLF
+          awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }' all.channels.xml > all.channels.xml.crlf
+          mv all.channels.xml.crlf all.channels.xml
+
+          # Stage & commit if changed
+          git add all.channels.xml
+          if git diff --quiet --cached; then
+            echo "No changes to commit — skipping."
             DID_COMMIT="no"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add all.channels.xml
             git commit -m "chore: update all.channels.xml (${CHANNEL_COUNT} channels; +${ADDED} -${REMOVED} ~${MODIFIED}, total ${TOTAL_CHANGED})"
             git push
             DID_COMMIT="yes"
           fi
 
-          # Build summary (expects FILES_SCANNED, FILES_SKIPPED, CHANNEL_COUNT set earlier)
+          # Build summary
           {
             echo "### all.channels.xml build"
             echo
