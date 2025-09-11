@@ -2,6 +2,11 @@ name: Update Default Node Version
 
 on:
   workflow_dispatch:
+    inputs:
+      node_major:
+        description: 'Node + Modules autobump (optional)'
+        required: false
+        default: ''
   schedule:
     - cron: "0 */12 * * *"
 
@@ -86,30 +91,30 @@ jobs:
           latest_major='${{ steps.latest.outputs.latest_major }}'
           updated="false"
 
-          if [[ "$current_major" =~ ^[0-9]+$ && "$latest_major" =~ ^[0-9]+$ ]]; then
-            if (( latest_major > current_major )); then
-              echo "✏️  Updating $file to Node $latest_major"
+          if [[ "$current_major" =~ ^[0-9]+$ && "$latest_major" =~ ^[0-9]+$ && $latest_major -gt $current_major ]]; then
+            echo "✏️  Updating $file to Node $latest_major"
 
-              # ARG NODE_VERSION=MAJOR
-              sed -i.bak -E "s/^(ARG NODE_VERSION=).*/\\1${latest_major}/" "$file"
+            # Normalize line endings, just in case:
+            sed -i.bak 's/\r$//' "$file" || true
 
-              # FROM node:${NODE_VERSION:-<N>}-alpine AS builder
-              sed -i.bak -E "s|(FROM[[:space:]]+node:\$\{NODE_VERSION:-)[0-9]+(\}-alpine[[:space:]]+AS[[:space:]]+builder)|\1${latest_major}\2|" "$file"
+            # 1) ARG NODE_VERSION=<MAJOR>
+            sed -i.bak -E 's/^(ARG[[:space:]]+NODE_VERSION=).*/\1'"$latest_major"'/' "$file"
 
-              # FROM gcr.io/distroless/nodejs${NODE_VERSION:-<N>} AS runner
-              sed -i.bak -E "s|(FROM[[:space:]]+gcr\.io/distroless/nodejs\$\{NODE_VERSION:-)[0-9]+(\}[[:space:]]+AS[[:space:]]+runner)|\1${latest_major}\2|" "$file"
+            # 2) FROM node:${NODE_VERSION:-<N>}-alpine AS builder
+            sed -i.bak -E 's|^(FROM[[:space:]]+node:\$\{NODE_VERSION:-)[0-9]+(\}-alpine[[:space:]]+AS[[:space:]]+builder)$|\1'"$latest_major"'\2|' "$file"
 
-              rm -f "${file}.bak"
-              updated="true"
-              echo "new_value=$latest_major" >> "$GITHUB_OUTPUT"
-            fi
+            # 3) FROM gcr.io/distroless/nodejs${NODE_VERSION:-<N>} AS runner
+            sed -i.bak -E 's|^(FROM[[:space:]]+gcr\.io/distroless/nodejs\$\{NODE_VERSION:-)[0-9]+(\}[[:space:]]+AS[[:space:]]+runner)$|\1'"$latest_major"'\2|' "$file"
+
+            rm -f "${file}.bak"
+            updated="true"
+            echo "updated=true" >> "$GITHUB_OUTPUT"
+            echo "new_value=$latest_major" >> "$GITHUB_OUTPUT"
           fi
 
           if [[ "${updated}" != "true" ]]; then
             echo "ℹ️  No update needed"
             echo "updated=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Step 4 — Commit and push
@@ -128,7 +133,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh workflow run docker-build.yml --ref master -f reason="distroless bump" -f node_major="${{ steps.update.outputs.new_value }}"
+          gh workflow run docker-build.yml --ref master -f node_major="${{ steps.update.outputs.new_value }}"
 
       - name: Summary
         if: always()
