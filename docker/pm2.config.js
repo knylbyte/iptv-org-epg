@@ -1,7 +1,7 @@
 // docker/pm2.config.js
 // Distroless-ready PM2 config (no npm/npx at runtime) with list support in SITE and CLANG.
 // Multi-site behavior:
-// - If SITE has > 1 entries: build sites/tmp.channels.xml from all.channels.xml and run a single grab.
+// - If SITE has > 1 entries: build sites/tmp.channels.xml by scanning /epg/sites/<site>/** for *.channels.xml and run a single grab.
 // - If SITE has exactly 1 entry: run a single grab with --site <the-one-site> (no combined).
 // - If SITE is empty: fallback to channels.xml or (if ALL_SITES) all.channels.xml.
 //
@@ -119,36 +119,87 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
 };
 
 // Helper to create an exec-string for chronos (runs via /bin/sh -c).
-// It generates sites/tmp.channels.xml by filtering sites/all.channels.xml for the selected SITE_LIST,
-// then spawns a single grab.ts run with --channels sites/tmp.channels.xml.
+// It builds sites/tmp.channels.xml by scanning /epg/sites/<site>/** for *.channels.xml,
+// extracting <channel> nodes, and writing a single combined channels file.
 function makeCombinedExecString(grabArgs) {
   const code = `
     const fs = require('fs');
+    const path = require('path');
     const cp = require('child_process');
 
-    // De-duplicate SITE list to avoid redundant filtering
+    // De-duplicate SITE list to avoid redundant scanning
     const sites = Array.from(new Set(${JSON.stringify(SITE_LIST)}));
-    const allPath = '/epg/sites/all.channels.xml';
-    const tmpPath = '/epg/sites/tmp.channels.xml';
+    const baseDir = '/epg/sites';
+    const tmpPath = path.join(baseDir, 'tmp.channels.xml');
 
-    try {
-      const xml = fs.readFileSync(allPath, 'utf8');
-      const re = /<channel\\b[\\s\\S]*?<\\/channel>/g;
-      const selected = [];
-      let m;
-      while ((m = re.exec(xml))) {
-        const tag = m[0];
-        const s = tag.match(/\\bsite="([^"]+)"/);
-        if (s && sites.includes(s[1])) selected.push(tag);
+    // Recursively collect *.channels.xml under /epg/sites/<site>/
+    function walk(dir, out) {
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
       }
-      const out = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + selected.join('\\n') + '\\n</channels>\\n';
+      for (const ent of entries) {
+        const p = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          walk(p, out);
+        } else if (/\\.channels\\.xml$/i.test(ent.name)) {
+          out.push(p);
+        }
+      }
+    }
+
+    const files = [];
+    for (const s of sites) {
+      const siteDir = path.join(baseDir, s);
+      try {
+        const st = fs.statSync(siteDir);
+        if (st.isDirectory()) {
+          walk(siteDir, files);
+        } else {
+          console.warn('[multi-site] Not a directory:', siteDir);
+        }
+      } catch {
+        console.warn('[multi-site] Missing site directory:', siteDir);
+      }
+    }
+
+    // Extract <channel> nodes from each file
+    const chunks = [];
+    for (const f of files) {
+      try {
+        const xml = fs.readFileSync(f, 'utf8');
+        // Prefer inner of <channels>…</channels>, fallback to direct <channel> tags.
+        const m = xml.match(/<channels[^>]*>([\\s\\S]*?)<\\/channels>/i);
+        let inner = m ? m[1] : null;
+        if (!inner) {
+          const list = xml.match(/<channel\\b[\\s\\S]*?<\\/channel>/gi);
+          if (list) inner = list.join('\\n');
+        }
+        if (inner) {
+          chunks.push(inner.trim());
+          console.log('[multi-site] included:', f);
+        } else {
+          console.warn('[multi-site] no <channel> found in:', f);
+        }
+      } catch (e) {
+        console.warn('[multi-site] failed to read:', f, e && e.message || e);
+      }
+    }
+
+    // Write the combined channels file
+    try {
+      const body = chunks.length ? (chunks.join('\\n') + '\\n') : '';
+      const out = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + body + '</channels>\\n';
       fs.writeFileSync(tmpPath, out, 'utf8');
-      console.log('[multi-site] tmp.channels.xml written with', selected.length, 'channel nodes for', sites.length, 'site(s).');
+      console.log('[multi-site] tmp.channels.xml written with', chunks.length, 'chunk(s) from', files.length, 'file(s).');
     } catch (e) {
-      console.error('[multi-site] Failed to build tmp.channels.xml:', e && e.stack || e);
+      console.error('[multi-site] Failed to write tmp.channels.xml:', e && e.stack || e);
       process.exit(1);
     }
 
+    // Run the actual grab with --channels sites/tmp.channels.xml
     const args = ${JSON.stringify(grabArgs)};
     const res = cp.spawnSync('${NODE}', ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
       stdio: 'inherit',
@@ -161,30 +212,77 @@ function makeCombinedExecString(grabArgs) {
 }
 
 // Inline version for one-shot RUN_AT_STARTUP (no chronos wrapper)
+// Does the exact same directory scanning and combine logic once.
 function makeCombinedInlineCode(grabArgs) {
   return `
     const fs = require('fs');
+    const path = require('path');
     const cp = require('child_process');
 
     const sites = Array.from(new Set(${JSON.stringify(SITE_LIST)}));
-    const allPath = '/epg/sites/all.channels.xml';
-    const tmpPath = '/epg/sites/tmp.channels.xml';
+    const baseDir = '/epg/sites';
+    const tmpPath = path.join(baseDir, 'tmp.channels.xml');
+
+    function walk(dir, out) {
+      let entries;
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const ent of entries) {
+        const p = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          walk(p, out);
+        } else if (/\\.channels\\.xml$/i.test(ent.name)) {
+          out.push(p);
+        }
+      }
+    }
+
+    const files = [];
+    for (const s of sites) {
+      const siteDir = path.join(baseDir, s);
+      try {
+        const st = fs.statSync(siteDir);
+        if (st.isDirectory()) {
+          walk(siteDir, files);
+        } else {
+          console.warn('[multi-site] Not a directory:', siteDir);
+        }
+      } catch {
+        console.warn('[multi-site] Missing site directory:', siteDir);
+      }
+    }
+
+    const chunks = [];
+    for (const f of files) {
+      try {
+        const xml = fs.readFileSync(f, 'utf8');
+        const m = xml.match(/<channels[^>]*>([\\s\\S]*?)<\\/channels>/i);
+        let inner = m ? m[1] : null;
+        if (!inner) {
+          const list = xml.match(/<channel\\b[\\s\\S]*?<\\/channel>/gi);
+          if (list) inner = list.join('\\n');
+        }
+        if (inner) {
+          chunks.push(inner.trim());
+          console.log('[multi-site] included:', f);
+        } else {
+          console.warn('[multi-site] no <channel> found in:', f);
+        }
+      } catch (e) {
+        console.warn('[multi-site] failed to read:', f, e && e.message || e);
+      }
+    }
 
     try {
-      const xml = fs.readFileSync(allPath, 'utf8');
-      const re = /<channel\\b[\\s\\S]*?<\\/channel>/g;
-      const selected = [];
-      let m;
-      while ((m = re.exec(xml))) {
-        const tag = m[0];
-        const s = tag.match(/\\bsite="([^"]+)"/);
-        if (s && sites.includes(s[1])) selected.push(tag);
-      }
-      const out = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + selected.join('\\n') + '\\n</channels>\\n';
+      const body = chunks.length ? (chunks.join('\\n') + '\\n') : '';
+      const out = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + body + '</channels>\\n';
       fs.writeFileSync(tmpPath, out, 'utf8');
-      console.log('[multi-site] tmp.channels.xml written with', selected.length, 'channel nodes for', sites.length, 'site(s).');
+      console.log('[multi-site] tmp.channels.xml written with', chunks.length, 'chunk(s) from', files.length, 'file(s).');
     } catch (e) {
-      console.error('[multi-site] Failed to build tmp.channels.xml:', e && e.stack || e);
+      console.error('[multi-site] Failed to write tmp.channels.xml:', e && e.stack || e);
       process.exit(1);
     }
 
@@ -216,14 +314,14 @@ const apps = [
 
 // Decide mode with precedence:
 // - If SITE_LIST.length >= 1 → ignore ALL_SITES entirely.
-//   - If >1: combined
-//   - If ===1: single-site
-// - Else (SITE empty): fallback uses ALL_SITES or channels.xml as before.
+//   - If >1: combined (directory scanning)
+//   - If ===1: single-site (no combined)
+// - Else (SITE empty): fallback uses ALL_SITES as before.
 const siteCount = SITE_LIST.length;
 
 if (siteCount >= 1) {
   if (siteCount > 1) {
-    // --- combined multi-site mode ---
+    // --- combined multi-site mode via directory scan ---
     const grabArgs = buildGrabArgs({ site: undefined, useChannelsXml: false, combined: true });
     const combinedExec = makeCombinedExecString(grabArgs);
     const inlineCode   = makeCombinedInlineCode(grabArgs);
