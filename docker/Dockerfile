@@ -94,7 +94,7 @@ COPY --from=builder /_stash/ca-certificates.crt /etc/ssl/certs/ca-certificates.c
 COPY --from=bb /out/bin /bin
 
 # Ensure /bin is in PATH (distroless usually has it, but this makes it explicit).
-#ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 WORKDIR /epg
 
