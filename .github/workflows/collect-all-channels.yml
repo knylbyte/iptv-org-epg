@@ -22,19 +22,19 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Honor .gitattributes (CRLF policy)
+      - name: Step 1 - Honor .gitattributes (CRLF policy)
         run: |
           # Do not fight .gitattributes; avoid extra auto-conversions
           git config --global core.autocrlf false
           git config --global core.safecrlf false
 
 
-      - name: Install xmllint (libxml2-utils)
+      - name: Step 2 - Install xmllint (libxml2-utils)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libxml2-utils
 
-      - name: Build combined all.channels.xml
+      - name: Step 3 - Build combined all.channels.xml
         shell: bash
         run: |
           set -euo pipefail
@@ -96,7 +96,7 @@ jobs:
             printf '%s' '<?xml version="1.0" encoding="UTF-8"?><channels/>' > old.all.channels.xml
           fi
 
-      - name: Generate diff script (changes.py)
+      - name: Step 4 - Generate diff script (changes.py)
         id: gen_diff
         env:
           CHANGES_PY: |-
@@ -132,7 +132,8 @@ jobs:
           set -euo pipefail
           printf "%s" "$CHANGES_PY" > changes.py
 
-      - name: Compute diff and commit if changed
+      - name: Step 5 - Compute diff and commit if changed
+        id: update
         shell: bash
         run: |
           set -euo pipefail
@@ -152,12 +153,14 @@ jobs:
           if git diff --quiet --cached; then
             echo "No changes to commit — skipping."
             DID_COMMIT="no"
+            echo "updated=false" >> "$GITHUB_OUTPUT"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git commit -m "chore: update all.channels.xml (${CHANNEL_COUNT} channels; +${ADDED} -${REMOVED} ~${MODIFIED}, total ${TOTAL_CHANGED})"
             git push
             DID_COMMIT="yes"
+            echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
 
           # Build summary
@@ -174,3 +177,14 @@ jobs:
             echo "  - **Total changed**: ${TOTAL_CHANGED}"
             echo "- Committed: ${DID_COMMIT}"
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Step 6 — Trigger Docker Build via workflow_dispatch
+        if: steps.update.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ADDED=${{ steps.gen_diff.outputs.ADDED }}
+          REMOVED=${{ steps.gen_diff.outputs.REMOVED }}
+          MODIFIED=${{ steps.gen_diff.outputs.MODIFIED }}
+          TOTAL_CHANGED=$((ADDED + REMOVED + MODIFIED))
+          gh workflow run docker-build.yml --ref master -f channels_updatet="${TOTAL_CHANGED} updated channels"
