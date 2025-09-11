@@ -94,24 +94,17 @@ jobs:
         shell: bash
         run: echo "short_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
-      - name: Create manifest (short-sha)
+      - name: Create manifest (short-sha and latest)
         run: |
           IMAGE="${{ env.IMAGE }}"
           SHORT_SHA="${{ steps.vars.outputs.short_sha }}"
 
           docker buildx imagetools create \
             -t "${IMAGE}:${SHORT_SHA}" \
+            -t "${IMAGE}:latest" \
               "${IMAGE}:linux-amd64" \
               "${IMAGE}:linux-arm64" \
               "${IMAGE}:linux-armv7"
-
-      - name: Alias short-sha -> alias
-        run: |
-          IMAGE="${{ env.IMAGE }}"
-          SHORT_SHA="${{ steps.vars.outputs.short_sha }}"
-          docker buildx imagetools create \
-            -t "${IMAGE}:latest" \
-            "${IMAGE}:${SHORT_SHA}"
 
       - name: Inspect manifests
         run: |
