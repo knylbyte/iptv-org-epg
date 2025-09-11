@@ -130,10 +130,6 @@ jobs:
             print(f"REMOVED")
             print(f"MODIFIED")
 
-            echo "added=${ADDED}" >> "$GITHUB_OUTPUT"
-            echo "removed=${REMOVED}" >> "$GITHUB_OUTPUT"
-            echo "modified=${MODIFIED}" >> "$GITHUB_OUTPUT"
-
         run: |
           set -euo pipefail
           printf "%s" "$CHANGES_PY" > changes.py
@@ -183,14 +179,18 @@ jobs:
             echo "  - **Total changed**: ${TOTAL_CHANGED}"
             echo "- Committed: ${DID_COMMIT}"
           } >> "$GITHUB_STEP_SUMMARY"
+          
+          echo "added=${ADDED}" >> "$GITHUB_OUTPUT"
+          echo "removed=${REMOVED}" >> "$GITHUB_OUTPUT"
+          echo "modified=${MODIFIED}" >> "$GITHUB_OUTPUT"
 
       - name: Step 6 — Trigger Docker Build via workflow_dispatch
         if: steps.update.outputs.updated == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ADDED=${{ steps.gen_diff.outputs.added }}
-          REMOVED=${{ steps.gen_diff.outputs.removed }}
-          MODIFIED=${{ steps.gen_diff.outputs.modified }}
+          ADDED=${{ steps.update.outputs.added }}
+          REMOVED=${{ steps.update.outputs.removed }}
+          MODIFIED=${{ steps.update.outputs.modified }}
           TOTAL_CHANGED=$((ADDED + REMOVED + MODIFIED))
           gh workflow run docker-build.yml --ref master -f channels_updatet="${TOTAL_CHANGED} updated channels"
