@@ -3,14 +3,15 @@ name: Build all.channels.xml
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 0 * * *"
+    # Runs daily at 03:17 UTC
+    - cron: "17 3 * * *"
 
 permissions:
   contents: write
 
 concurrency:
   group: all-channels-xml
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -18,6 +19,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # ensure proper diff behavior
 
       - name: Install xmllint (libxml2-utils)
         run: |
@@ -38,17 +41,18 @@ jobs:
           fi
 
           TMP="$(mktemp)"
+          SKIPPED=0
 
-          # Start the combined XML with a single <channels> root
+          # Create a single <channels> root and append all <channel> nodes from each file
           {
             printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
             printf '%s\n' '<channels>'
             for f in "${FILES[@]}"; do
-              # Extract all <channel> nodes from each file
               if out="$(xmllint --xpath '//channels/channel' "$f" 2>/dev/null)"; then
                 printf '%s\n' "$out"
               else
                 echo "WARN: Could not parse or no <channel> nodes found in: $f" >&2
+                ((SKIPPED++)) || true
               fi
             done
             printf '%s\n' '</channels>'
@@ -57,18 +61,29 @@ jobs:
           # Pretty-print and write to the repository root
           xmllint --format "$TMP" -o all.channels.xml
 
-          # Count channels for commit message
-          CHANNEL_COUNT="$(grep -o '<channel[^>]*>' all.channels.xml | wc -l | tr -d '[:space:]')"
+          # Count channels for commit message (match start tag robustly)
+          CHANNEL_COUNT="$(grep -oi '<channel\b' all.channels.xml | wc -l | tr -d '[:space:]')"
           echo "Generated all.channels.xml with ${CHANNEL_COUNT} channel entries."
 
-          # Commit only if there are changes
+          # Make sure diffs detect a new file on the first run (intent-to-add)
+          git add -N all.channels.xml || true
+
+          # Only commit if there are changes (works for both modified and brand-new file)
           if git diff --quiet -- all.channels.xml 2>/dev/null; then
             echo "No changes to all.channels.xml — skipping commit."
-            exit 0
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add all.channels.xml
+            git commit -m "chore: update all.channels.xml (${CHANNEL_COUNT} channels)"
+            git push
           fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add all.channels.xml
-          git commit -m "chore: update all.channels.xml (${CHANNEL_COUNT} channels)"
-          git push
+          # Write a brief build summary to the Actions run
+          {
+            echo "### all.channels.xml build"
+            echo ""
+            echo "- Files scanned: ${#FILES[@]}"
+            echo "- Files skipped (parse/empty): ${SKIPPED}"
+            echo "- Channel entries in output: ${CHANNEL_COUNT}"
+          } >> "$GITHUB_STEP_SUMMARY"
