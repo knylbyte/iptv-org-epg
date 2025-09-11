@@ -122,13 +122,18 @@ jobs:
             old = load(sys.argv[1] if len(sys.argv) > 1 else '')
             new = load(sys.argv[2] if len(sys.argv) > 2 else '')
 
-            added    = [k for k in new.keys() - old.keys()]
-            removed  = [k for k in old.keys() - new.keys()]
-            modified = [k for k in new.keys() & old.keys() if new[k] != old[k]]
+            added    = len([k for k in new.keys() - old.keys()])
+            removed  = len([k for k in old.keys() - new.keys()])
+            modified = len([k for k in new.keys() & old.keys() if new[k] != old[k]])
 
-            print(f"ADDED={len(added)}")
-            print(f"REMOVED={len(removed)}")
-            print(f"MODIFIED={len(modified)}")
+            print(f"ADDED")
+            print(f"REMOVED")
+            print(f"MODIFIED")
+
+            echo ADDED >> "$GITHUB_OUTPUT"
+            echo REMOVED >> "$GITHUB_OUTPUT"
+            echo MODIFIED >> "$GITHUB_OUTPUT"
+            
         run: |
           set -euo pipefail
           printf "%s" "$CHANGES_PY" > changes.py
