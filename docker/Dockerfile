@@ -57,16 +57,33 @@ RUN npm run api:load
 RUN cp -a /usr/share/zoneinfo                /_stash/zoneinfo \
  && cp -a /etc/ssl/certs/ca-certificates.crt /_stash/ca-certificates.crt
 
-# --- Helper stage: produce a *statically linked* busybox binary
-# We use Alpine to install 'busybox-static' so that /bin/sh & getconf
-# do NOT depend on any runtime linker/libs inside the distroless image.
+# --- Helper stage: static BusyBox for /bin/sh (no runtime deps)
 FROM alpine:3.20 AS bb
 RUN apk add --no-cache busybox-static
-# Copy the static binary and create the applet symlinks we need.
 RUN mkdir -p /out/bin \
  && cp /bin/busybox.static /out/bin/busybox \
- && ln -s /out/bin/busybox /out/bin/sh \
- && ln -s /out/bin/busybox /out/bin/getconf
+ # Use *relative* symlinks so they remain valid after COPY to /bin
+ && ln -s busybox /out/bin/sh
+
+# --- Helper stage: build a tiny static `getconf` that reads sysconf()
+FROM alpine:3.20 AS gc
+RUN apk add --no-cache build-base musl-dev
+WORKDIR /src
+# Minimal getconf clone: supports CLK_TCK and PAGESIZE (PAGE_SIZE alias)
+RUN printf '%s\n' \
+'#include <unistd.h>' \
+'#include <stdio.h>' \
+'#include <string.h>' \
+'int main(int argc, char** argv){' \
+'  if(argc<2){fprintf(stderr,"usage: getconf NAME\\n"); return 1;}' \
+'  if(!strcmp(argv[1],"CLK_TCK")){' \
+'    long v=sysconf(_SC_CLK_TCK); if(v<0) return 1; printf("%ld\\n",v); return 0;}' \
+'  if(!strcmp(argv[1],"PAGESIZE")||!strcmp(argv[1],"PAGE_SIZE")){' \
+'    long v=sysconf(_SC_PAGESIZE); if(v<0) return 1; printf("%ld\\n",v); return 0;}' \
+'  fprintf(stderr,"getconf: unsupported: %s\\n",argv[1]); return 1;}' \
+> getconf.c
+# Build static so it runs in distroless on any arch (amd64/arm64/armv7)
+RUN gcc -Os -static -s -o /out/getconf getconf.c
 
 # ---------- Runner (Distroless) ----------
 FROM gcr.io/distroless/nodejs${NODE_VERSION:-24} AS runner
@@ -89,9 +106,10 @@ ENV NODE_ENV=production  \
 COPY --from=builder /_stash/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /_stash/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 
-# Provide a minimal /bin with sh + getconf so PM2/pidusage can run.
-# Distroless doesn't allow RUN, so we just COPY the prepared tools in.
+# Provide /bin with a static /bin/sh (BusyBox) ...
 COPY --from=bb /out/bin /bin
+# ... and overwrite /bin/getconf with our static getconf binary
+COPY --from=gc /out/getconf /bin/getconf
 
 # Ensure /bin is in PATH (distroless usually has it, but this makes it explicit).
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
@@ -102,9 +120,6 @@ WORKDIR /epg
 COPY --from=builder /epg /epg
 
 EXPOSE 3000
-
-# Drop root privileges
-# USER node # deacticated for test purpose
 
 # Distroless-Node has ENTRYPOINT ["node"]; we therefore specify the JS file:
 # pm2-runtime directly from node_modules, without PATH or shell.
