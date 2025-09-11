@@ -179,7 +179,7 @@ To fine-tune the execution, you can pass environment variables to the container 
 ```sh
 docker run \
 -p 5000:3000 \
--v /path/to/channels.xml:/epg/channels.xml \
+-v /path/to/channels.xml:/epg/sites/channels.xml \
 -e CRON_SCHEDULE="0 0,12 * * *" \
 -e PORT=3000 \
 -e MAX_CONNECTIONS=10 \
@@ -210,6 +210,30 @@ iptv-org/epg
 | TIMEOUT         | Timeout for each request in milliseconds (default: 0)                                                              |
 | DELAY           | Delay between request in milliseconds (default: 0)                                                                 |
 | RUN_AT_STARTUP  | Run grab on container startup (default: true)                                                                      |
+
+#### Channel Source Resolution (Workflow)*
+The container decides which channel list to use in this order:
+
+```python
+if SITE is set:
+    → use the built-in site channel lists for the given site(s)
+else if ALL_SITES is truthy:
+    → use the aggregated list of all sites (all.channels.xml)
+else:
+    → use /epg/channels.xml from your bind mount
+```
+
+#### Accepted formats
+- **SITE** (single env var):
+  - Single site:
+    - `-e SITE=web.magentatv.de`
+  - Comma-separated list:
+    - `-e SITE=web.magentatv.de,sky.de`
+  - JSON array:
+    - `-e SITE='["web.magentatv.de","sky.de"]'`
+- **ALL_SITES**: boolean flag (enables fetching the aggregated all.channels.xml).
+  - Precedence: SITE overrides ALL_SITES.
+  - **Note**: ALL_SITES can be very large and take longer to fetch/process.
 
 ## Database
 
