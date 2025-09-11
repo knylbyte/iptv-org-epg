@@ -26,7 +26,7 @@
 //
 // Notes:
 // - No shell in distroless. Everything runs via /nodejs/bin/node.
-// - If SITE or CLANG is empty, we fall back to /epg/channels.xml (must be bind-mounted).
+// - If SITE or CLANG is empty, we fall back to /epg/sites/channels.xml (must be bind-mounted).
 
 const path = require('path');
 
@@ -111,7 +111,7 @@ const buildGrabArgs = ({ site, useChannelsXml }) => {
   if (site && !useChannelsXml) {
     args.push('--site', site);
   } else {
-    args.push('--channels', 'channels.xml');
+    args.push('--channels', 'sites/channels.xml');
   }
   args.push('--output', 'public/guide.xml');
   args.push('--maxConnections', String(MAX_CONNECTIONS));

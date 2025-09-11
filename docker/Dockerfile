@@ -19,7 +19,7 @@ RUN apk update \
 
 RUN npm install -g npm@latest
 
-RUN mkdir -p /epg/public /_stash
+RUN mkdir -p /epg/public /epg/sites/ /_stash
 
 WORKDIR /epg
 
@@ -47,6 +47,7 @@ COPY sites                  ./sites
 COPY docker/pm2.config.js   ./pm2.config.js
 COPY tsconfig.json          ./tsconfig.json
 COPY package.json           ./package.json
+COPY all.channels.xml       ./sites/all.channels.xml
 
 # Manually repeat the post-installation step (loads temp/data/*.json)
 RUN npm run api:load
