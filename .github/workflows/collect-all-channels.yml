@@ -21,6 +21,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0  # ensure proper diff behavior
+      
+      - name: Enforce LF line endings in CI
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
+      # (optional) if .gitattributes changed in this run, normalize working tree
+      - name: Renormalize if needed
+        run: |
+          if git diff --name-only HEAD -- .gitattributes | grep -q .; then
+            git add --renormalize .
+            git reset -- .
+          fi
 
       - name: Install xmllint (libxml2-utils)
         run: |
