@@ -22,6 +22,7 @@ services:
       # DELAY: "500"                # delay between requests (ms)
       # PROXY: "http://user:pass@host:port"
       # CURL: "true"                # output requests as curl
+      # ALL_SITES: true             # use all.channels.xml filtered by CLANG (see below)
 
       #Select source: Either SITE (preferred) or channels.xml (see Volume above)
       # SITE: |                     # folder name in ./sites/<site>/*.channels.xml

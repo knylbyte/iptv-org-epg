@@ -146,10 +146,40 @@ npm install
 
 ## Docker
 
+### Use Docker image from GHCR
+
+```yaml
+services:
+  iptv-org-epg:
+    image: ghcr.io/knylbyte/iptv-org/epg:latest
+    container_name: epg
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data/public:/epg/public
+      # If you want to use your own channel list instead of SITE,
+      # create a local ./channels.xml and activate the line below.
+      # - ./channels.xml:/epg/channels.xml:ro
+    environment:
+      TZ: America/Chicago          # time zone for correct scheduling
+      CRON_SCHEDULE: "0 2 * * *"   # daily 2:00 a.m.
+      PORT: 3000                   # port for web server
+      RUN_AT_STARTUP: "true"       # execute once directly at startup
+      MAX_CONNECTIONS: 1           # performance/output options (supported by the grabber)
+      GZIP: "false"                # additionally generate guide.xml.gz if "true"
+      ALL_SITES: false             # fetch all sites, filtered by language
+      CLANG: >-
+        en
+        es
+```
+
+See also `docker-compose.yml` file.
+
 ### Build an image
 
 ```sh
-docker build -t iptv-org/epg --no-cache .
+docker build -f docker/Dockerfile -t iptv-org/epg --no-cache .
 ```
 
 ### Create and run container
