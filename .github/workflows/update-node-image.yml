@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: update-node-image
@@ -111,19 +112,23 @@ jobs:
             echo "updated=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Step 4 — Commit and push (triggers build workflow)
+      - name: Step 4 — Commit and push
         if: steps.update.outputs.updated == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          echo ""
-          echo "🚀  Committing and pushing changes to trigger build..."
-          echo ""
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add docker/Dockerfile
           git commit -m "chore(docker): bump NODE_VERSION and FROM defaults to ${{ steps.update.outputs.new_value }} (distroless)"
           git push
+
+      - name: Step 5 — Trigger Docker Build via workflow_dispatch
+        if: steps.update.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run docker-build.yml --ref master -f reason="distroless bump" -f node_major="${{ steps.update.outputs.new_value }}"
 
       - name: Summary
         if: always()
