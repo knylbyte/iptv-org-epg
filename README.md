@@ -179,13 +179,14 @@ See also `docker-compose.yml` file.
 ### Build an image
 
 ```sh
-docker build -f docker/Dockerfile -t iptv-org/epg --no-cache .
+docker build -f docker/Dockerfile -t iptv-org/epg --no-cache .                             <- ARM64 and AMD64
+docker build -f docker/Dockerfile -t iptv-org/epg --no-cache --build-arg node_version=22 . <- ARMv7
 ```
 
 ### Create and run container
 
 ```sh
-docker run -p 3000:3000 -v /path/to/channels.xml:/epg/channels.xml iptv-org/epg
+docker run -p 3000:3000 -v /path/to/channels.xml:/epg/sites/channels.xml iptv-org/epg
 ```
 
 By default, the guide will be downloaded every day at 00:00 UTC and saved to the `/epg/public/guide.xml` file inside the container.
