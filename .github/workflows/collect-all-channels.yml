@@ -126,10 +126,9 @@ jobs:
             removed  = [k for k in old.keys() - new.keys()]
             modified = [k for k in new.keys() & old.keys() if new[k] != old[k]]
 
-            print(f"len(ADDED)")
-            print(f"len(REMOVED)")
-            print(f"len(MODIFIED)")
-
+            print(f"ADDED={len(added)}")
+            print(f"REMOVED={len(removed)}")
+            print(f"MODIFIED={len(modified)}")
         run: |
           set -euo pipefail
           printf "%s" "$CHANGES_PY" > changes.py
@@ -179,7 +178,7 @@ jobs:
             echo "  - **Total changed**: ${TOTAL_CHANGED}"
             echo "- Committed: ${DID_COMMIT}"
           } >> "$GITHUB_STEP_SUMMARY"
-          
+
           echo "added=${ADDED}" >> "$GITHUB_OUTPUT"
           echo "removed=${REMOVED}" >> "$GITHUB_OUTPUT"
           echo "modified=${MODIFIED}" >> "$GITHUB_OUTPUT"
@@ -189,8 +188,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          ADDED=${{ steps.update.outputs.added }}
-          REMOVED=${{ steps.update.outputs.removed }}
-          MODIFIED=${{ steps.update.outputs.modified }}
+          ADDED=${{ steps.update.outputs.ADDED }}
+          REMOVED=${{ steps.update.outputs.REMOVED }}
+          MODIFIED=${{ steps.update.outputs.MODIFIED }}
           TOTAL_CHANGED=$((ADDED + REMOVED + MODIFIED))
           gh workflow run docker-build.yml --ref master -f channels_updatet="${TOTAL_CHANGED} updated channels"
