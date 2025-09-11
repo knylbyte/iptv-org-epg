@@ -2,11 +2,6 @@ name: Update Default Node Version
 
 on:
   workflow_dispatch:
-    inputs:
-      node_major:
-        description: 'Node + Modules autobump (optional)'
-        required: false
-        default: ''
   schedule:
     - cron: "0 */12 * * *"
 
