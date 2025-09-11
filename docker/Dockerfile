@@ -57,12 +57,14 @@ RUN npm run api:load
 RUN cp -a /usr/share/zoneinfo                /_stash/zoneinfo \
  && cp -a /etc/ssl/certs/ca-certificates.crt /_stash/ca-certificates.crt
 
-# --- Helper stage: prepare BusyBox (provides /bin/sh and /bin/getconf)
-FROM busybox:${BB_VERSION}-uclibc AS bb
-# Copy the static busybox binary and create the symlinks we need.
-# PM2 (via pidusage) executes `getconf` through `/bin/sh`, which distroless doesn't ship.
+# --- Helper stage: produce a *statically linked* busybox binary
+# We use Alpine to install 'busybox-static' so that /bin/sh & getconf
+# do NOT depend on any runtime linker/libs inside the distroless image.
+FROM alpine:3.20 AS bb
+RUN apk add --no-cache busybox-static
+# Copy the static binary and create the applet symlinks we need.
 RUN mkdir -p /out/bin \
- && cp /bin/busybox /out/bin/busybox \
+ && cp /bin/busybox.static /out/bin/busybox \
  && ln -s /out/bin/busybox /out/bin/sh \
  && ln -s /out/bin/busybox /out/bin/getconf
 
@@ -92,7 +94,7 @@ COPY --from=builder /_stash/ca-certificates.crt /etc/ssl/certs/ca-certificates.c
 COPY --from=bb /out/bin /bin
 
 # Ensure /bin is in PATH (distroless usually has it, but this makes it explicit).
-ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+#ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 WORKDIR /epg
 
