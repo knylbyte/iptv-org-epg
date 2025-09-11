@@ -14,7 +14,8 @@
 // Notes:
 // - No extra runtime deps; combination uses plain Node stdlib.
 // - We only scan under /epg/sites/<site>/ (recursive).
-// - Combined cache lives at /tmp/tmp.channels.xml + /tmp/tmp.channels.meta.json
+// - Combined cache: /tmp/tmp.channels.xml + /tmp/tmp.channels.meta.json
+// - IMPORTANT: We sanitize env for child process (remove GZIP/CURL) so only CLI flags control these booleans.
 
 const path = require('path');
 
@@ -60,9 +61,7 @@ const parseListFromSingleKey = (key) => {
     try {
       const arr = JSON.parse(s);
       if (Array.isArray(arr)) {
-        return arr
-          .map((x) => String(x).trim())
-          .filter((x) => x.length > 0);
+        return arr.map((x) => String(x).trim()).filter((x) => x.length > 0);
       }
     } catch {
       // fall back to delimiter parsing below
@@ -91,26 +90,23 @@ const DAYS            = envInt(process.env.DAYS);
 const ALL_SITES       = envBool(process.env.ALL_SITES, false); // Ignored if SITE is set
 const PROXY           = process.env.PROXY;
 
-// Site(s) and lang(s) — same variable names, but accept lists
+// Site(s) and lang(s)
 const SITE_LIST  = parseListFromSingleKey('SITE');
 const CLANG_LIST = parseListFromSingleKey('CLANG');
 const LANG_CSV   = CLANG_LIST.length ? CLANG_LIST.join(',') : undefined;
 
 // --- build grab args ---
+// Only use CLI flags; do NOT rely on env in the child process.
 const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
   const args = [];
 
   if (combined) {
-    // Combined mode: we prebuild /tmp/tmp.channels.xml and feed it to grab.ts
     args.push('--channels', '/tmp/tmp.channels.xml');
   } else if (site && !useChannelsXml) {
-    // Single-site explicit mode
     args.push('--site', site);
   } else if (ALL_SITES) {
-    // Fallback when no SITE provided: all channels
     args.push('--channels', 'sites/all.channels.xml');
   } else {
-    // Default fallback: curated channels.xml
     args.push('--channels', 'sites/channels.xml');
   }
 
@@ -121,22 +117,57 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
   if (DELAY   !== undefined) args.push('--delay', String(DELAY));
   if (PROXY)                  args.push('--proxy', PROXY);
   if (LANG_CSV)               args.push('--lang', LANG_CSV);
-  if (GZIP)                   args.push('--gzip');
-  if (CURL)                   args.push('--curl');
+
+  // Explicit booleans via CLI flags only
+  if (GZIP) args.push('--gzip');
+  if (CURL) args.push('--curl');
+
   return args;
 };
 
-// --- single source of truth: JS code that builds (or reuses) /tmp/tmp.channels.xml ---
-// Uses a sidecar meta file (/tmp/tmp.channels.meta.json) to avoid XML markers.
+// --- generic sanitized spawn wrapper (single source of truth) ---
+// Runs tsx grab.ts with sanitized env (GZIP/CURL removed) so only CLI flags matter.
+function makeSanitizedGrabExec(grabArgs) {
+  const code = `
+    const cp = require('child_process');
+    const env = { ...process.env };
+    delete env.GZIP;
+    delete env.CURL;
+    const args = ${JSON.stringify(grabArgs)};
+    const res = cp.spawnSync(process.execPath, ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
+      stdio: 'inherit',
+      cwd: '/epg',
+      env
+    });
+    process.exit(res.status ?? 0);
+  `;
+  const escaped = code.replace(/(["\\$`])/g, '\\$1').replace(/\n/g, '\\n');
+  return `${NODE} -e "${escaped}"`;
+}
+function makeSanitizedGrabInlineCode(grabArgs) {
+  return `
+    const cp = require('child_process');
+    const env = { ...process.env };
+    delete env.GZIP;
+    delete env.CURL;
+    const args = ${JSON.stringify(grabArgs)};
+    const res = cp.spawnSync(process.execPath, ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
+      stdio: 'inherit',
+      cwd: '/epg',
+      env
+    });
+    process.exit(res.status ?? 0);
+  `;
+}
+
+// --- combined builder with mtime-based cache (no XML markers) ---
 function buildCombinerCode() {
   return `
     const fs = require('fs');
     const path = require('path');
     const cp = require('child_process');
 
-    // Sites are unique + sorted for stable comparisons
     const sites = Array.from(new Set(${JSON.stringify(SITE_LIST)})).sort();
-
     const baseDir  = '/epg/sites';
     const tmpXml   = '/tmp/tmp.channels.xml';
     const tmpMeta  = '/tmp/tmp.channels.meta.json';
@@ -173,53 +204,40 @@ function buildCombinerCode() {
           console.warn('[multi-site] Missing site directory:', siteDir);
         }
       }
-      files.sort(); // stable order
+      files.sort();
       let maxMtimeMs = 0;
-      const stats = [];
       for (const f of files) {
         try {
           const st = fs.statSync(f);
           const m  = Number(st.mtimeMs) || 0;
-          stats.push({ path: f, mtimeMs: m });
           if (m > maxMtimeMs) maxMtimeMs = m;
-        } catch {
-          // If a file disappears between readdir and stat, we ignore it (forces rebuild later).
-        }
+        } catch {}
       }
-      return { files, stats, maxMtimeMs };
+      return { files, maxMtimeMs };
     }
 
     function readMeta() {
       try {
         if (!fs.existsSync(tmpXml) || !fs.existsSync(tmpMeta)) return null;
-        const raw = fs.readFileSync(tmpMeta, 'utf8');
-        const meta = JSON.parse(raw);
+        const meta = JSON.parse(fs.readFileSync(tmpMeta, 'utf8'));
         if (!meta || !Array.isArray(meta.sites) || !Array.isArray(meta.files)) return null;
         return meta;
-      } catch (e) {
-        console.warn('[multi-site] meta read failed:', e && e.message || e);
+      } catch {
         return null;
       }
     }
 
     function writeMeta(meta) {
-      try {
-        fs.writeFileSync(tmpMeta, JSON.stringify(meta, null, 2), 'utf8');
-      } catch (e) {
-        console.warn('[multi-site] meta write failed:', e && e.message || e);
-      }
+      try { fs.writeFileSync(tmpMeta, JSON.stringify(meta, null, 2), 'utf8'); } catch {}
     }
 
-    // Decide reuse vs rebuild
     const current = collectSources(sites);
     let reuse = false;
     const meta = readMeta();
-
     if (meta) {
       const sameSites = JSON.stringify(meta.sites) === JSON.stringify(sites);
       const sameFiles = JSON.stringify(meta.files) === JSON.stringify(current.files);
       const upToDate  = Number(meta.maxMtimeMs) >= current.maxMtimeMs;
-
       if (sameSites && sameFiles && upToDate) {
         reuse = true;
         console.log('[multi-site] Reusing cached /tmp/tmp.channels.xml');
@@ -227,68 +245,47 @@ function buildCombinerCode() {
     }
 
     if (!reuse) {
-      // Build combined XML from current files
       const chunks = [];
       for (const f of current.files) {
         try {
           const xml = fs.readFileSync(f, 'utf8');
-          // Prefer inner of <channels>…</channels>, fallback to direct <channel> tags.
           const m = xml.match(/<channels[^>]*>([\\s\\S]*?)<\\/channels>/i);
           let inner = m ? m[1] : null;
           if (!inner) {
             const list = xml.match(/<channel\\b[\\s\\S]*?<\\/channel>/gi);
             if (list) inner = list.join('\\n');
           }
-          if (inner) {
-            chunks.push(inner.trim());
-            console.log('[multi-site] included:', f);
-          } else {
-            console.warn('[multi-site] no <channel> found in:', f);
-          }
+          if (inner) chunks.push(inner.trim()); else console.warn('[multi-site] no <channel> in', f);
         } catch (e) {
           console.warn('[multi-site] read failed:', f, e && e.message || e);
         }
       }
-
-      try {
-        const body = chunks.length ? (chunks.join('\\n') + '\\n') : '';
-        const out  = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + body + '</channels>\\n';
-        fs.writeFileSync(tmpXml, out, 'utf8');
-        console.log('[multi-site] Rebuilt /tmp/tmp.channels.xml with', chunks.length, 'chunk(s) from', current.files.length, 'file(s).');
-
-        writeMeta({
-          version: 1,
-          builtAt: Date.now(),
-          sites,
-          files: current.files,      // sorted paths
-          maxMtimeMs: current.maxMtimeMs
-        });
-      } catch (e) {
-        console.error('[multi-site] Failed to write /tmp/tmp.channels.xml:', e && e.stack || e);
-        process.exit(1);
-      }
+      const body = chunks.length ? (chunks.join('\\n') + '\\n') : '';
+      const out  = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + body + '</channels>\\n';
+      fs.writeFileSync(tmpXml, out, 'utf8');
+      console.log('[multi-site] Rebuilt /tmp/tmp.channels.xml with', chunks.length, 'chunk(s) from', current.files.length, 'file(s).');
+      writeMeta({ version: 1, builtAt: Date.now(), sites, files: current.files, maxMtimeMs: current.maxMtimeMs });
     }
 
-    // Run the actual grab with --channels /tmp/tmp.channels.xml
+    // sanitized spawn: remove GZIP/CURL from env so only CLI flags matter
+    const env = { ...process.env };
+    delete env.GZIP;
+    delete env.CURL;
+
     const args = ${JSON.stringify(buildGrabArgs({ site: undefined, useChannelsXml: false, combined: true }))};
-    const res = cp.spawnSync('${NODE}', ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
+    const res = cp.spawnSync(process.execPath, ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
       stdio: 'inherit',
-      cwd: '/epg'
+      cwd: '/epg',
+      env
     });
     process.exit(res.status ?? 0);
   `;
 }
-
-// Build the command string for chronos: /nodejs/bin/node -e "<escaped code>"
 function makeCombinedExecString() {
   const code = buildCombinerCode();
   const escaped = code.replace(/(["\\$`])/g, '\\$1').replace(/\n/g, '\\n');
   return `${NODE} -e "${escaped}"`;
 }
-
-// Plain "execute grab once" command (no combined prebuild).
-const makeGrabExec = (grabArgs) =>
-  [NODE, TSX_JS, 'scripts/commands/epg/grab.ts', ...grabArgs].join(' ');
 
 // ---- PM2 apps ----
 const apps = [
@@ -297,31 +294,31 @@ const apps = [
     cwd: '/epg',
     script: NODE,
     args: [SERVE_JS, '-l', `tcp://0.0.0.0:${PORT}`, 'public'],
-    interpreter: 'none',
+    interpreter: 'node',
     autorestart: true,
     watch: false
   }
 ];
 
-// Decide mode with precedence:
-// - If SITE_LIST.length >= 1 → ignore ALL_SITES entirely.
-//   - If >1: combined (directory scanning; cached in /tmp)
-//   - If ===1: single-site (no combined)
-// - Else (SITE empty): fallback uses ALL_SITES as before.
+// Precedence & modes:
+// - SITE >=1 → ignore ALL_SITES
+//   - SITE >1 → combined
+//   - SITE =1 → single-site
+// - SITE =0 → fallback
 const siteCount = SITE_LIST.length;
 
 if (siteCount >= 1) {
   if (siteCount > 1) {
-    // --- combined multi-site mode via directory scan with caching (/tmp/tmp.channels.xml) ---
+    // combined multi-site mode (cached in /tmp)
     const combinedExec = makeCombinedExecString();
-    const inlineCode   = buildCombinerCode(); // same code, no duplication
+    const inlineCode   = buildCombinerCode();
 
     apps.push({
       name: 'grab',
       cwd: '/epg',
       script: NODE,
       args: [CHRONOS_JS, '--execute', combinedExec, '--pattern', CRON_SCHEDULE, '--log'],
-      interpreter: 'none',
+      interpreter: 'node',
       autorestart: true,
       exp_backoff_restart_delay: 5000,
       watch: false
@@ -333,24 +330,26 @@ if (siteCount >= 1) {
         cwd: '/epg',
         script: NODE,
         args: ['-e', inlineCode],
-        interpreter: 'none',
+        interpreter: 'node',
         autorestart: false,
         stop_exit_codes: [0],
         watch: false
       });
     }
   } else {
-    // --- single-site mode (no combined) ---
-    const theSite = SITE_LIST[0];
+    // single-site mode (no combine)
+    const theSite  = SITE_LIST[0];
     const grabArgs = buildGrabArgs({ site: theSite, useChannelsXml: false, combined: false });
-    const grabExec = makeGrabExec(grabArgs);
+
+    const execStr  = makeSanitizedGrabExec(grabArgs);
+    const inline   = makeSanitizedGrabInlineCode(grabArgs);
 
     apps.push({
       name: `grab:${slug(theSite)}`,
       cwd: '/epg',
       script: NODE,
-      args: [CHRONOS_JS, '--execute', grabExec, '--pattern', CRON_SCHEDULE, '--log'],
-      interpreter: 'none',
+      args: [CHRONOS_JS, '--execute', execStr, '--pattern', CRON_SCHEDULE, '--log'],
+      interpreter: 'node',
       autorestart: true,
       exp_backoff_restart_delay: 5000,
       watch: false
@@ -361,8 +360,8 @@ if (siteCount >= 1) {
         name: `grab-at-startup:${slug(theSite)}`,
         cwd: '/epg',
         script: NODE,
-        args: [TSX_JS, 'scripts/commands/epg/grab.ts', ...grabArgs],
-        interpreter: 'none',
+        args: ['-e', inline],
+        interpreter: 'node',
         autorestart: false,
         stop_exit_codes: [0],
         watch: false
@@ -370,16 +369,17 @@ if (siteCount >= 1) {
     }
   }
 } else {
-  // --- fallback mode (SITE empty): channels.xml or ALL_SITES → all.channels.xml ---
+  // fallback mode (SITE empty)
   const grabArgs = buildGrabArgs({ site: undefined, useChannelsXml: true, combined: false });
-  const grabExec = makeGrabExec(grabArgs);
+  const execStr  = makeSanitizedGrabExec(grabArgs);
+  const inline   = makeSanitizedGrabInlineCode(grabArgs);
 
   apps.push({
     name: 'grab',
     cwd: '/epg',
     script: NODE,
-    args: [CHRONOS_JS, '--execute', grabExec, '--pattern', CRON_SCHEDULE, '--log'],
-    interpreter: 'none',
+    args: [CHRONOS_JS, '--execute', execStr, '--pattern', CRON_SCHEDULE, '--log'],
+    interpreter: 'node',
     autorestart: true,
     exp_backoff_restart_delay: 5000,
     watch: false
@@ -390,8 +390,8 @@ if (siteCount >= 1) {
       name: 'grab-at-startup',
       cwd: '/epg',
       script: NODE,
-      args: [TSX_JS, 'scripts/commands/epg/grab.ts', ...grabArgs],
-      interpreter: 'none',
+      args: ['-e', inline],
+      interpreter: 'node',
       autorestart: false,
       stop_exit_codes: [0],
       watch: false
