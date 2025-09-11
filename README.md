@@ -200,6 +200,7 @@ iptv-org/epg
 | PORT            | Port on which the web server listens (default: 3000)                                                               |
 | MAX_CONNECTIONS | Limit on the number of concurrent requests (default: 1)                                                            |
 | SITE            | Specific website from SITES.md (default: empty) (default: undefined)                                               |
+| ALL_SITES       | Fetches all sites from all.channels.xml, optionally filtered by language (default: false)                          |
 | CLANG           | Language filter (ISO 639-1 codes, e.g., "en,es") (default: undefined)                                              |
 | GZIP            | Boolean value indicating whether to create a compressed version of the guide (default: false)                      |
 | CURL            | Display each request as CURL (default: false)                                                                      |

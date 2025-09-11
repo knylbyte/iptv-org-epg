@@ -98,6 +98,7 @@ const RUN_AT_STARTUP  = envBool(process.env.RUN_AT_STARTUP, true);
 const TIMEOUT         = envInt(process.env.TIMEOUT);
 const DELAY           = envInt(process.env.DELAY);
 const DAYS            = envInt(process.env.DAYS);
+const ALL_SITES       = envBool(process.env.ALL_SITES, false);
 const PROXY           = process.env.PROXY;
 
 // Site(s) and lang(s) — same variable names, but accept lists
@@ -110,6 +111,8 @@ const buildGrabArgs = ({ site, useChannelsXml }) => {
   const args = [];
   if (site && !useChannelsXml) {
     args.push('--site', site);
+  } else if (ALL_SITES) {
+    args.push('--channels', 'sites/all.channels.xml');
   } else {
     args.push('--channels', 'sites/channels.xml');
   }
