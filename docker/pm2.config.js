@@ -1,12 +1,20 @@
 // docker/pm2.config.js
 // Distroless-ready PM2 config (no npm/npx at runtime) with list support in SITE and CLANG.
-// Multi-site behavior:
-// - If SITE has > 1 entries: build sites/tmp.channels.xml by scanning /epg/sites/<site>/** for *.channels.xml and run a single grab.
-// - If SITE has exactly 1 entry: run a single grab with --site <the-one-site> (no combined).
+//
+// Multi-site behavior (final):
+// - If SITE has > 1 entries: build /tmp/tmp.channels.xml by scanning /epg/sites/<site>/** for *.channels.xml,
+//   extracting <channel> nodes into a single combined channels file, then run ONE grab with --channels /tmp/tmp.channels.xml.
+//   Caching: reuse /tmp/tmp.channels.xml only if /tmp/tmp.channels.meta.json matches SITE list, file list, and max mtime.
+// - If SITE has exactly 1 entry: run ONE grab with --site <the-one-site> (no combine step).
 // - If SITE is empty: fallback to channels.xml or (if ALL_SITES) all.channels.xml.
 //
 // Precedence:
 // - If SITE length >= 1, it ALWAYS takes precedence; ALL_SITES is ignored.
+//
+// Notes:
+// - No extra runtime deps; combination uses plain Node stdlib.
+// - We only scan under /epg/sites/<site>/ (recursive).
+// - Combined cache lives at /tmp/tmp.channels.xml + /tmp/tmp.channels.meta.json
 
 const path = require('path');
 
@@ -93,8 +101,8 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
   const args = [];
 
   if (combined) {
-    // Combined mode: we prebuild sites/tmp.channels.xml and feed it to grab.ts
-    args.push('--channels', 'sites/tmp.channels.xml');
+    // Combined mode: we prebuild /tmp/tmp.channels.xml and feed it to grab.ts
+    args.push('--channels', '/tmp/tmp.channels.xml');
   } else if (site && !useChannelsXml) {
     // Single-site explicit mode
     args.push('--site', site);
@@ -118,110 +126,20 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
   return args;
 };
 
-// Helper to create an exec-string for chronos (runs via /bin/sh -c).
-// It builds sites/tmp.channels.xml by scanning /epg/sites/<site>/** for *.channels.xml,
-// extracting <channel> nodes, and writing a single combined channels file.
-function makeCombinedExecString(grabArgs) {
-  const code = `
-    const fs = require('fs');
-    const path = require('path');
-    const cp = require('child_process');
-
-    // De-duplicate SITE list to avoid redundant scanning
-    const sites = Array.from(new Set(${JSON.stringify(SITE_LIST)}));
-    const baseDir = '/epg/sites';
-    const tmpPath = path.join(baseDir, 'tmp.channels.xml');
-
-    // Recursively collect *.channels.xml under /epg/sites/<site>/
-    function walk(dir, out) {
-      let entries;
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const ent of entries) {
-        const p = path.join(dir, ent.name);
-        if (ent.isDirectory()) {
-          walk(p, out);
-        } else if (/\\.channels\\.xml$/i.test(ent.name)) {
-          out.push(p);
-        }
-      }
-    }
-
-    const files = [];
-    for (const s of sites) {
-      const siteDir = path.join(baseDir, s);
-      try {
-        const st = fs.statSync(siteDir);
-        if (st.isDirectory()) {
-          walk(siteDir, files);
-        } else {
-          console.warn('[multi-site] Not a directory:', siteDir);
-        }
-      } catch {
-        console.warn('[multi-site] Missing site directory:', siteDir);
-      }
-    }
-
-    // Extract <channel> nodes from each file
-    const chunks = [];
-    for (const f of files) {
-      try {
-        const xml = fs.readFileSync(f, 'utf8');
-        // Prefer inner of <channels>…</channels>, fallback to direct <channel> tags.
-        const m = xml.match(/<channels[^>]*>([\\s\\S]*?)<\\/channels>/i);
-        let inner = m ? m[1] : null;
-        if (!inner) {
-          const list = xml.match(/<channel\\b[\\s\\S]*?<\\/channel>/gi);
-          if (list) inner = list.join('\\n');
-        }
-        if (inner) {
-          chunks.push(inner.trim());
-          console.log('[multi-site] included:', f);
-        } else {
-          console.warn('[multi-site] no <channel> found in:', f);
-        }
-      } catch (e) {
-        console.warn('[multi-site] failed to read:', f, e && e.message || e);
-      }
-    }
-
-    // Write the combined channels file
-    try {
-      const body = chunks.length ? (chunks.join('\\n') + '\\n') : '';
-      const out = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + body + '</channels>\\n';
-      fs.writeFileSync(tmpPath, out, 'utf8');
-      console.log('[multi-site] tmp.channels.xml written with', chunks.length, 'chunk(s) from', files.length, 'file(s).');
-    } catch (e) {
-      console.error('[multi-site] Failed to write tmp.channels.xml:', e && e.stack || e);
-      process.exit(1);
-    }
-
-    // Run the actual grab with --channels sites/tmp.channels.xml
-    const args = ${JSON.stringify(grabArgs)};
-    const res = cp.spawnSync('${NODE}', ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
-      stdio: 'inherit',
-      cwd: '/epg'
-    });
-    process.exit(res.status ?? 0);
-  `;
-  const escaped = code.replace(/(["\\$`])/g, '\\$1').replace(/\n/g, '\\n');
-  return `${NODE} -e "${escaped}"`;
-}
-
-// Inline version for one-shot RUN_AT_STARTUP (no chronos wrapper)
-// Does the exact same directory scanning and combine logic once.
-function makeCombinedInlineCode(grabArgs) {
+// --- single source of truth: JS code that builds (or reuses) /tmp/tmp.channels.xml ---
+// Uses a sidecar meta file (/tmp/tmp.channels.meta.json) to avoid XML markers.
+function buildCombinerCode() {
   return `
     const fs = require('fs');
     const path = require('path');
     const cp = require('child_process');
 
-    const sites = Array.from(new Set(${JSON.stringify(SITE_LIST)}));
-    const baseDir = '/epg/sites';
-    const tmpPath = path.join(baseDir, 'tmp.channels.xml');
+    // Sites are unique + sorted for stable comparisons
+    const sites = Array.from(new Set(${JSON.stringify(SITE_LIST)})).sort();
+
+    const baseDir  = '/epg/sites';
+    const tmpXml   = '/tmp/tmp.channels.xml';
+    const tmpMeta  = '/tmp/tmp.channels.meta.json';
 
     function walk(dir, out) {
       let entries;
@@ -240,59 +158,132 @@ function makeCombinedInlineCode(grabArgs) {
       }
     }
 
-    const files = [];
-    for (const s of sites) {
-      const siteDir = path.join(baseDir, s);
-      try {
-        const st = fs.statSync(siteDir);
-        if (st.isDirectory()) {
-          walk(siteDir, files);
-        } else {
-          console.warn('[multi-site] Not a directory:', siteDir);
+    function collectSources(siteList) {
+      const files = [];
+      for (const s of siteList) {
+        const siteDir = path.join(baseDir, s);
+        try {
+          const st = fs.statSync(siteDir);
+          if (st.isDirectory()) {
+            walk(siteDir, files);
+          } else {
+            console.warn('[multi-site] Not a directory:', siteDir);
+          }
+        } catch {
+          console.warn('[multi-site] Missing site directory:', siteDir);
         }
-      } catch {
-        console.warn('[multi-site] Missing site directory:', siteDir);
       }
+      files.sort(); // stable order
+      let maxMtimeMs = 0;
+      const stats = [];
+      for (const f of files) {
+        try {
+          const st = fs.statSync(f);
+          const m  = Number(st.mtimeMs) || 0;
+          stats.push({ path: f, mtimeMs: m });
+          if (m > maxMtimeMs) maxMtimeMs = m;
+        } catch {
+          // If a file disappears between readdir and stat, we ignore it (forces rebuild later).
+        }
+      }
+      return { files, stats, maxMtimeMs };
     }
 
-    const chunks = [];
-    for (const f of files) {
+    function readMeta() {
       try {
-        const xml = fs.readFileSync(f, 'utf8');
-        const m = xml.match(/<channels[^>]*>([\\s\\S]*?)<\\/channels>/i);
-        let inner = m ? m[1] : null;
-        if (!inner) {
-          const list = xml.match(/<channel\\b[\\s\\S]*?<\\/channel>/gi);
-          if (list) inner = list.join('\\n');
-        }
-        if (inner) {
-          chunks.push(inner.trim());
-          console.log('[multi-site] included:', f);
-        } else {
-          console.warn('[multi-site] no <channel> found in:', f);
-        }
+        if (!fs.existsSync(tmpXml) || !fs.existsSync(tmpMeta)) return null;
+        const raw = fs.readFileSync(tmpMeta, 'utf8');
+        const meta = JSON.parse(raw);
+        if (!meta || !Array.isArray(meta.sites) || !Array.isArray(meta.files)) return null;
+        return meta;
       } catch (e) {
-        console.warn('[multi-site] failed to read:', f, e && e.message || e);
+        console.warn('[multi-site] meta read failed:', e && e.message || e);
+        return null;
       }
     }
 
-    try {
-      const body = chunks.length ? (chunks.join('\\n') + '\\n') : '';
-      const out = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + body + '</channels>\\n';
-      fs.writeFileSync(tmpPath, out, 'utf8');
-      console.log('[multi-site] tmp.channels.xml written with', chunks.length, 'chunk(s) from', files.length, 'file(s).');
-    } catch (e) {
-      console.error('[multi-site] Failed to write tmp.channels.xml:', e && e.stack || e);
-      process.exit(1);
+    function writeMeta(meta) {
+      try {
+        fs.writeFileSync(tmpMeta, JSON.stringify(meta, null, 2), 'utf8');
+      } catch (e) {
+        console.warn('[multi-site] meta write failed:', e && e.message || e);
+      }
     }
 
-    const args = ${JSON.stringify(grabArgs)};
+    // Decide reuse vs rebuild
+    const current = collectSources(sites);
+    let reuse = false;
+    const meta = readMeta();
+
+    if (meta) {
+      const sameSites = JSON.stringify(meta.sites) === JSON.stringify(sites);
+      const sameFiles = JSON.stringify(meta.files) === JSON.stringify(current.files);
+      const upToDate  = Number(meta.maxMtimeMs) >= current.maxMtimeMs;
+
+      if (sameSites && sameFiles && upToDate) {
+        reuse = true;
+        console.log('[multi-site] Reusing cached /tmp/tmp.channels.xml');
+      }
+    }
+
+    if (!reuse) {
+      // Build combined XML from current files
+      const chunks = [];
+      for (const f of current.files) {
+        try {
+          const xml = fs.readFileSync(f, 'utf8');
+          // Prefer inner of <channels>…</channels>, fallback to direct <channel> tags.
+          const m = xml.match(/<channels[^>]*>([\\s\\S]*?)<\\/channels>/i);
+          let inner = m ? m[1] : null;
+          if (!inner) {
+            const list = xml.match(/<channel\\b[\\s\\S]*?<\\/channel>/gi);
+            if (list) inner = list.join('\\n');
+          }
+          if (inner) {
+            chunks.push(inner.trim());
+            console.log('[multi-site] included:', f);
+          } else {
+            console.warn('[multi-site] no <channel> found in:', f);
+          }
+        } catch (e) {
+          console.warn('[multi-site] read failed:', f, e && e.message || e);
+        }
+      }
+
+      try {
+        const body = chunks.length ? (chunks.join('\\n') + '\\n') : '';
+        const out  = '<?xml version="1.0" encoding="UTF-8"?>\\n<channels>\\n' + body + '</channels>\\n';
+        fs.writeFileSync(tmpXml, out, 'utf8');
+        console.log('[multi-site] Rebuilt /tmp/tmp.channels.xml with', chunks.length, 'chunk(s) from', current.files.length, 'file(s).');
+
+        writeMeta({
+          version: 1,
+          builtAt: Date.now(),
+          sites,
+          files: current.files,      // sorted paths
+          maxMtimeMs: current.maxMtimeMs
+        });
+      } catch (e) {
+        console.error('[multi-site] Failed to write /tmp/tmp.channels.xml:', e && e.stack || e);
+        process.exit(1);
+      }
+    }
+
+    // Run the actual grab with --channels /tmp/tmp.channels.xml
+    const args = ${JSON.stringify(buildGrabArgs({ site: undefined, useChannelsXml: false, combined: true }))};
     const res = cp.spawnSync('${NODE}', ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
       stdio: 'inherit',
       cwd: '/epg'
     });
     process.exit(res.status ?? 0);
   `;
+}
+
+// Build the command string for chronos: /nodejs/bin/node -e "<escaped code>"
+function makeCombinedExecString() {
+  const code = buildCombinerCode();
+  const escaped = code.replace(/(["\\$`])/g, '\\$1').replace(/\n/g, '\\n');
+  return `${NODE} -e "${escaped}"`;
 }
 
 // Plain "execute grab once" command (no combined prebuild).
@@ -306,7 +297,7 @@ const apps = [
     cwd: '/epg',
     script: NODE,
     args: [SERVE_JS, '-l', `tcp://0.0.0.0:${PORT}`, 'public'],
-    interpreter: 'node',
+    interpreter: 'none',
     autorestart: true,
     watch: false
   }
@@ -314,24 +305,23 @@ const apps = [
 
 // Decide mode with precedence:
 // - If SITE_LIST.length >= 1 → ignore ALL_SITES entirely.
-//   - If >1: combined (directory scanning)
+//   - If >1: combined (directory scanning; cached in /tmp)
 //   - If ===1: single-site (no combined)
 // - Else (SITE empty): fallback uses ALL_SITES as before.
 const siteCount = SITE_LIST.length;
 
 if (siteCount >= 1) {
   if (siteCount > 1) {
-    // --- combined multi-site mode via directory scan ---
-    const grabArgs = buildGrabArgs({ site: undefined, useChannelsXml: false, combined: true });
-    const combinedExec = makeCombinedExecString(grabArgs);
-    const inlineCode   = makeCombinedInlineCode(grabArgs);
+    // --- combined multi-site mode via directory scan with caching (/tmp/tmp.channels.xml) ---
+    const combinedExec = makeCombinedExecString();
+    const inlineCode   = buildCombinerCode(); // same code, no duplication
 
     apps.push({
       name: 'grab',
       cwd: '/epg',
       script: NODE,
       args: [CHRONOS_JS, '--execute', combinedExec, '--pattern', CRON_SCHEDULE, '--log'],
-      interpreter: 'node',
+      interpreter: 'none',
       autorestart: true,
       exp_backoff_restart_delay: 5000,
       watch: false
@@ -343,7 +333,7 @@ if (siteCount >= 1) {
         cwd: '/epg',
         script: NODE,
         args: ['-e', inlineCode],
-        interpreter: 'node',
+        interpreter: 'none',
         autorestart: false,
         stop_exit_codes: [0],
         watch: false
@@ -360,7 +350,7 @@ if (siteCount >= 1) {
       cwd: '/epg',
       script: NODE,
       args: [CHRONOS_JS, '--execute', grabExec, '--pattern', CRON_SCHEDULE, '--log'],
-      interpreter: 'node',
+      interpreter: 'none',
       autorestart: true,
       exp_backoff_restart_delay: 5000,
       watch: false
@@ -372,7 +362,7 @@ if (siteCount >= 1) {
         cwd: '/epg',
         script: NODE,
         args: [TSX_JS, 'scripts/commands/epg/grab.ts', ...grabArgs],
-        interpreter: 'node',
+        interpreter: 'none',
         autorestart: false,
         stop_exit_codes: [0],
         watch: false
@@ -389,7 +379,7 @@ if (siteCount >= 1) {
     cwd: '/epg',
     script: NODE,
     args: [CHRONOS_JS, '--execute', grabExec, '--pattern', CRON_SCHEDULE, '--log'],
-    interpreter: 'node',
+    interpreter: 'none',
     autorestart: true,
     exp_backoff_restart_delay: 5000,
     watch: false
@@ -401,7 +391,7 @@ if (siteCount >= 1) {
       cwd: '/epg',
       script: NODE,
       args: [TSX_JS, 'scripts/commands/epg/grab.ts', ...grabArgs],
-      interpreter: 'node',
+      interpreter: 'none',
       autorestart: false,
       stop_exit_codes: [0],
       watch: false
