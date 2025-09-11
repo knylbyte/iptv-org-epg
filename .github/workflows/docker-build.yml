@@ -105,5 +105,5 @@ jobs:
         run: |
           IMAGE="${{ env.IMAGE }}"
           SHORT_SHA="${{ steps.vars.outputs.short_sha }}"
-          docker buildx imagetools inspect "${IMAGE}:latest"
           docker buildx imagetools inspect "${IMAGE}:${SHORT_SHA}"
+          docker buildx imagetools inspect "${IMAGE}:latest"
