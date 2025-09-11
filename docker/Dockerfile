@@ -4,6 +4,7 @@ ARG PM2_VER=5.4.2
 ARG SERVE_VER=14.2.5
 ARG TSX_VER=4.19.1
 ARG CHRONOS_VER=0.0.1
+ARG BB_VERSION=1.36.0
 
 # --- Builder stage: use local repo and install deps ---
 FROM node:${NODE_VERSION:-24}-alpine AS builder
@@ -56,6 +57,15 @@ RUN npm run api:load
 RUN cp -a /usr/share/zoneinfo                /_stash/zoneinfo \
  && cp -a /etc/ssl/certs/ca-certificates.crt /_stash/ca-certificates.crt
 
+# --- Helper stage: prepare BusyBox (provides /bin/sh and /bin/getconf)
+FROM busybox:${BB_VERSION}-uclibc AS bb
+# Copy the static busybox binary and create the symlinks we need.
+# PM2 (via pidusage) executes `getconf` through `/bin/sh`, which distroless doesn't ship.
+RUN mkdir -p /out/bin \
+ && cp /bin/busybox /out/bin/busybox \
+ && ln -s /out/bin/busybox /out/bin/sh \
+ && ln -s /out/bin/busybox /out/bin/getconf
+
 # ---------- Runner (Distroless) ----------
 FROM gcr.io/distroless/nodejs${NODE_VERSION:-24} AS runner
 
@@ -76,6 +86,13 @@ ENV NODE_ENV=production  \
 # Provide tzdata (and CA bundle) to the distroless image
 COPY --from=builder /_stash/zoneinfo /usr/share/zoneinfo
 COPY --from=builder /_stash/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+# Provide a minimal /bin with sh + getconf so PM2/pidusage can run.
+# Distroless doesn't allow RUN, so we just COPY the prepared tools in.
+COPY --from=bb /out/bin /bin
+
+# Ensure /bin is in PATH (distroless usually has it, but this makes it explicit).
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 WORKDIR /epg
 
