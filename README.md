@@ -184,6 +184,7 @@ docker run \
 -e PORT=3000 \
 -e MAX_CONNECTIONS=10 \
 -e SITE=["example.com", "epg.io"] \
+-e ALL_SITES=true \
 -e CLANG=["en", "es"] \
 -e GZIP=true \
 -e CURL=true \
