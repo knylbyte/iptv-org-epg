@@ -37,7 +37,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Collect all *.channels.xml files under ./sites (robust to spaces/newlines)
+          # Collect all *.channels.xml files under ./sites (also matches <channel>.*.channels.xml)
           mapfile -d '' -t FILES < <(find sites -type f -name '*.channels.xml' -print0 | sort -z)
           if (( ${#FILES[@]} == 0 )); then
             echo "No *.channels.xml files found under ./sites — nothing to do."
@@ -46,14 +46,27 @@ jobs:
 
           TMP="$(mktemp)"
           SKIPPED=0
+          TOTAL_FROM_FILES=0
 
-          # Build a single <channels> root and append all <channel> nodes
+          # Namespace-agnostic XPath expression:
+          #  - primary: //*[local-name()='channels']/*[local-name()='channel']
+          #  - fallback (non-namespaced): //channels/channel
+          NSA_XPATH="//*[local-name()='channels']/*[local-name()='channel']"
+
           {
             printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
             printf '%s\n' '<channels>'
             for f in "${FILES[@]}"; do
-              if out="$(xmllint --xpath '//channels/channel' "$f" 2>/dev/null)"; then
+              out="$(xmllint --xpath "$NSA_XPATH" "$f" 2>/dev/null || true)"
+              if [ -z "$out" ]; then
+                out="$(xmllint --xpath '//channels/channel' "$f" 2>/dev/null || true)"
+              fi
+
+              if [ -n "$out" ]; then
                 printf '%s\n' "$out"
+                # count how many channel nodes we extracted from this file
+                c="$(printf '%s' "$out" | grep -oi '<channel\b' | wc -l | tr -d '[:space:]')"
+                TOTAL_FROM_FILES=$((TOTAL_FROM_FILES + c))
               else
                 echo "WARN: Could not parse or no <channel> nodes found in: $f" >&2
                 ((SKIPPED++)) || true
@@ -65,8 +78,11 @@ jobs:
           # Pretty-print and write to the repository root
           xmllint --format "$TMP" -o all.channels.xml
 
-          # Count channels and export stats for later steps
+          # Count channels in the final merged file
           CHANNEL_COUNT="$(grep -oi '<channel\b' all.channels.xml | wc -l | tr -d '[:space:]')"
+          echo "Generated all.channels.xml with ${CHANNEL_COUNT} channel entries (raw from files: ${TOTAL_FROM_FILES})."
+
+          # Export stats for later steps
           echo "CHANNEL_COUNT=${CHANNEL_COUNT}" >> "$GITHUB_ENV"
           echo "FILES_SCANNED=${#FILES[@]}" >> "$GITHUB_ENV"
           echo "FILES_SKIPPED=${SKIPPED}" >> "$GITHUB_ENV"
