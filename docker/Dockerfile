@@ -83,7 +83,8 @@ RUN printf '%s\n' \
 '  fprintf(stderr,"getconf: unsupported: %s\\n",argv[1]); return 1;}' \
 > getconf.c
 # Build static so it runs in distroless on any arch (amd64/arm64/armv7)
-RUN gcc -Os -static -s -o /out/getconf getconf.c
+RUN mkdir -p /out \
+ && gcc -Os -static -s -o /out/getconf getconf.c
 
 # ---------- Runner (Distroless) ----------
 FROM gcr.io/distroless/nodejs${NODE_VERSION:-24} AS runner
