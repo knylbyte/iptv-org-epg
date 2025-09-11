@@ -294,7 +294,7 @@ const apps = [
     cwd: '/epg',
     script: NODE,
     args: [SERVE_JS, '-l', `tcp://0.0.0.0:${PORT}`, 'public'],
-    interpreter: 'node',
+    interpreter: 'none',
     autorestart: true,
     watch: false
   }
@@ -318,7 +318,7 @@ if (siteCount >= 1) {
       cwd: '/epg',
       script: NODE,
       args: [CHRONOS_JS, '--execute', combinedExec, '--pattern', CRON_SCHEDULE, '--log'],
-      interpreter: 'node',
+      interpreter: 'none',
       autorestart: true,
       exp_backoff_restart_delay: 5000,
       watch: false
@@ -330,7 +330,7 @@ if (siteCount >= 1) {
         cwd: '/epg',
         script: NODE,
         args: ['-e', inlineCode],
-        interpreter: 'node',
+        interpreter: 'none',
         autorestart: false,
         stop_exit_codes: [0],
         watch: false
@@ -349,7 +349,7 @@ if (siteCount >= 1) {
       cwd: '/epg',
       script: NODE,
       args: [CHRONOS_JS, '--execute', execStr, '--pattern', CRON_SCHEDULE, '--log'],
-      interpreter: 'node',
+      interpreter: 'none',
       autorestart: true,
       exp_backoff_restart_delay: 5000,
       watch: false
@@ -361,7 +361,7 @@ if (siteCount >= 1) {
         cwd: '/epg',
         script: NODE,
         args: ['-e', inline],
-        interpreter: 'node',
+        interpreter: 'none',
         autorestart: false,
         stop_exit_codes: [0],
         watch: false
@@ -379,7 +379,7 @@ if (siteCount >= 1) {
     cwd: '/epg',
     script: NODE,
     args: [CHRONOS_JS, '--execute', execStr, '--pattern', CRON_SCHEDULE, '--log'],
-    interpreter: 'node',
+    interpreter: 'none',
     autorestart: true,
     exp_backoff_restart_delay: 5000,
     watch: false
@@ -391,7 +391,7 @@ if (siteCount >= 1) {
       cwd: '/epg',
       script: NODE,
       args: ['-e', inline],
-      interpreter: 'node',
+      interpreter: 'none',
       autorestart: false,
       stop_exit_codes: [0],
       watch: false
