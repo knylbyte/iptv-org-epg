@@ -5,12 +5,13 @@ on:
   push:
     paths:
       - "sites/**"
+
 permissions:
   contents: write
 
 concurrency:
   group: all-channels-xml
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -19,20 +20,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # ensure proper diff behavior
-      
+          fetch-depth: 0
+
       - name: Enforce LF line endings in CI
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-
-      # (optional) if .gitattributes changed in this run, normalize working tree
-      - name: Renormalize if needed
-        run: |
-          if git diff --name-only HEAD -- .gitattributes | grep -q .; then
-            git add --renormalize .
-            git reset -- .
-          fi
 
       - name: Install xmllint (libxml2-utils)
         run: |
@@ -46,7 +39,6 @@ jobs:
 
           # Collect all *.channels.xml files under ./sites (robust to spaces/newlines)
           mapfile -d '' -t FILES < <(find sites -type f -name '*.channels.xml' -print0 | sort -z)
-
           if (( ${#FILES[@]} == 0 )); then
             echo "No *.channels.xml files found under ./sites — nothing to do."
             exit 0
@@ -55,7 +47,7 @@ jobs:
           TMP="$(mktemp)"
           SKIPPED=0
 
-          # Create a single <channels> root and append all <channel> nodes from each file
+          # Build a single <channels> root and append all <channel> nodes
           {
             printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>'
             printf '%s\n' '<channels>'
@@ -73,29 +65,127 @@ jobs:
           # Pretty-print and write to the repository root
           xmllint --format "$TMP" -o all.channels.xml
 
-          # Count channels for commit message (match start tag robustly)
+          # Count channels and export stats for later steps
           CHANNEL_COUNT="$(grep -oi '<channel\b' all.channels.xml | wc -l | tr -d '[:space:]')"
-          echo "Generated all.channels.xml with ${CHANNEL_COUNT} channel entries."
+          echo "CHANNEL_COUNT=${CHANNEL_COUNT}" >> "$GITHUB_ENV"
+          echo "FILES_SCANNED=${#FILES[@]}" >> "$GITHUB_ENV"
+          echo "FILES_SKIPPED=${SKIPPED}" >> "$GITHUB_ENV"
 
-          # Make sure diffs detect a new file on the first run (intent-to-add)
-          git add -N all.channels.xml || true
+          # Save previous version from HEAD (or minimal empty stub)
+          if git rev-parse --verify HEAD >/dev/null 2>&1 && git show HEAD:all.channels.xml >/dev/null 2>&1; then
+            git show HEAD:all.channels.xml > old.all.channels.xml || true
+          else
+            printf '%s' '<?xml version="1.0" encoding="UTF-8"?><channels/>' > old.all.channels.xml
+          fi
 
-          # Only commit if there are changes (works for both modified and brand-new file)
+      - name: Generate diff script (changes.py)
+        id: gen_diff
+        env:
+          CHANGES_PY: |-
+            import sys, hashlib, xml.etree.ElementTree as ET
+
+            def load(path):
+                try:
+                    t = ET.parse(path)
+                    root = t.getroot()
+                except Exception:
+                    return {}
+                items = {}
+                for ch in root.findall('channel'):
+                    key = ch.get('id')
+                    data = ET.tostring(ch, encoding='utf-8')
+                    h = hashlib.sha256(data).hexdigest()
+                    if key is None:
+                        key = h  # fallback if no id attribute
+                    items[key] = h
+                return items
+
+            old = load(sys.argv[1] if len(sys.argv) > 1 else '')
+            new = load(sys.argv[2] if len(sys.argv) > 2 else '')
+
+            added    = [k for k in new.keys() - old.keys()]
+            removed  = [k for k in old.keys() - new.keys()]
+            modified = [k for k in new.keys() & old.keys() if new[k] != old[k]]
+
+            print(f"ADDED={len(added)}")
+            print(f"REMOVED={len(removed)}")
+            print(f"MODIFIED={len(modified)}")
+        run: |
+          set -euo pipefail
+          printf "%s" "$CHANGES_PY" > changes.py
+
+      - name: Compute diff and commit if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Run diff script and export counts
+          python3 changes.py old.all.channels.xml all.channels.xml > changes.env
+          source changes.env
+          TOTAL_CHANGED=$((ADDED + REMOVED + MODIFIED))
+
+          # Commit only if the file content changed
           if git diff --quiet -- all.channels.xml 2>/dev/null; then
             echo "No changes to all.channels.xml — skipping commit."
+            DID_COMMIT="no"
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add all.channels.xml
-            git commit -m "chore: update all.channels.xml (${CHANNEL_COUNT} channels)"
+            git commit -m "chore: update all.channels.xml (${CHANNEL_COUNT} channels; +${ADDED} -${REMOVED} ~${MODIFIED}, total ${TOTAL_CHANGED})"
             git push
+            DID_COMMIT="yes"
           fi
 
-          # Write a brief build summary to the Actions run
+          # Build summary (expects FILES_SCANNED, FILES_SKIPPED, CHANNEL_COUNT set earlier)
           {
             echo "### all.channels.xml build"
-            echo ""
-            echo "- Files scanned: ${#FILES[@]}"
-            echo "- Files skipped (parse/empty): ${SKIPPED}"
+            echo
+            echo "- Files scanned: ${FILES_SCANNED}"
+            echo "- Files skipped (parse/empty): ${FILES_SKIPPED}"
             echo "- Channel entries in output: ${CHANNEL_COUNT}"
+            echo "- Changes vs. previous:"
+            echo "  - Added: ${ADDED}"
+            echo "  - Removed: ${REMOVED}"
+            echo "  - Modified: ${MODIFIED}"
+            echo "  - **Total changed**: ${TOTAL_CHANGED}"
+            echo "- Committed: ${DID_COMMIT}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+
+      - name: Compute diff and commit if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Run diff script to produce counts as shell env lines
+          python3 changes.py old.all.channels.xml all.channels.xml > changes.env
+          source changes.env
+          TOTAL_CHANGED=$((ADDED + REMOVED + MODIFIED))
+
+          # Commit only if file content changed
+          if git diff --quiet -- all.channels.xml 2>/dev/null; then
+            echo "No changes to all.channels.xml — skipping commit."
+            DID_COMMIT="no"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add all.channels.xml
+            git commit -m "chore: update all.channels.xml (${CHANNEL_COUNT} channels; +${ADDED} -${REMOVED} ~${MODIFIED}, total ${TOTAL_CHANGED})"
+            git push
+            DID_COMMIT="yes"
+          fi
+
+          {
+            echo "### all.channels.xml build"
+            echo
+            echo "- Files scanned: ${FILES_SCANNED}"
+            echo "- Files skipped (parse/empty): ${FILES_SKIPPED}"
+            echo "- Channel entries in output: ${CHANNEL_COUNT}"
+            echo "- Changes vs. previous:"
+            echo "  - Added: ${ADDED}"
+            echo "  - Removed: ${REMOVED}"
+            echo "  - Modified: ${MODIFIED}"
+            echo "  - **Total changed**: ${TOTAL_CHANGED}"
+            echo "- Committed: ${DID_COMMIT}"
           } >> "$GITHUB_STEP_SUMMARY"
