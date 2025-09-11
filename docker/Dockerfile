@@ -1,12 +1,12 @@
 # --- Global ARGs ---
-ARG NODE_VERSION=24
+ARG NODE_VERSION=22
 ARG PM2_VER=5.4.2
 ARG SERVE_VER=14.2.5
 ARG TSX_VER=4.19.1
 ARG CHRONOS_VER=0.0.1
 
 # --- Builder stage: use local repo and install deps ---
-FROM node:${NODE_VERSION:-24}-alpine AS builder
+FROM node:${NODE_VERSION:-22}-alpine AS builder
 
 ARG PM2_VER
 ARG SERVE_VER
@@ -56,7 +56,7 @@ RUN cp -a /usr/share/zoneinfo                /_stash/zoneinfo \
  && cp -a /etc/ssl/certs/ca-certificates.crt /_stash/ca-certificates.crt
 
 # ---------- Runner (Distroless) ----------
-FROM gcr.io/distroless/nodejs${NODE_VERSION:-24} AS runner
+FROM gcr.io/distroless/nodejs${NODE_VERSION:-22} AS runner
 
 # Default settings, can be overridden via env vars
 
