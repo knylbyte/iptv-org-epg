@@ -115,12 +115,10 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
   if (DAYS    !== undefined) args.push('--days', String(DAYS));
   if (TIMEOUT !== undefined) args.push('--timeout', String(TIMEOUT));
   if (DELAY   !== undefined) args.push('--delay', String(DELAY));
-  if (PROXY)                  args.push('--proxy', PROXY);
-  if (LANG_CSV)               args.push('--lang', LANG_CSV);
-
-  // Explicit booleans via CLI flags only
-  if (GZIP) args.push('--gzip');
-  if (CURL) args.push('--curl');
+  if (PROXY)                 args.push('--proxy', PROXY);
+  if (LANG_CSV)              args.push('--lang', LANG_CSV);
+  if (GZIP)                  args.push('--gzip');
+  if (CURL)                  args.push('--curl');
 
   return args;
 };
@@ -128,21 +126,9 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
 // --- generic sanitized spawn wrapper (single source of truth) ---
 // Runs tsx grab.ts with sanitized env (GZIP/CURL removed) so only CLI flags matter.
 function makeSanitizedGrabExec(grabArgs) {
-  const code = `
-    const cp = require('child_process');
-    const env = { ...process.env };
-    delete env.GZIP;
-    delete env.CURL;
-    const args = ${JSON.stringify(grabArgs)};
-    const res = cp.spawnSync(process.execPath, ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
-      stdio: 'inherit',
-      cwd: '/epg',
-      env
-    });
-    process.exit(res.status ?? 0);
-  `;
-  const escaped = code.replace(/(["\\$`])/g, '\\$1').replace(/\n/g, '\\n');
-  return `${NODE} -e "${escaped}"`;
+  const code = makeSanitizedGrabInlineCode(grabArgs);
+  const b64 = Buffer.from(code, 'utf8').toString('base64');
+  return `${NODE} -e "eval(Buffer.from('${b64}','base64').toString())"`;
 }
 function makeSanitizedGrabInlineCode(grabArgs) {
   return `
@@ -281,10 +267,11 @@ function buildCombinerCode() {
     process.exit(res.status ?? 0);
   `;
 }
+
 function makeCombinedExecString() {
-  const code = buildCombinerCode();
-  const escaped = code.replace(/(["\\$`])/g, '\\$1').replace(/\n/g, '\\n');
-  return `${NODE} -e "${escaped}"`;
+  const code   = buildCombinerCode();
+  const b64    = Buffer.from(code, 'utf8').toString('base64');
+  return `${NODE} -e "eval(Buffer.from('${b64}','base64').toString())"`;
 }
 
 // ---- PM2 apps ----
