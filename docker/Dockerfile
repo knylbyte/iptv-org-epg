@@ -1,4 +1,5 @@
 # --- Global ARGs ---
+ARG ALPINE_VERSION=3.20
 ARG NODE_VERSION=24
 ARG PM2_VER=5.4.2
 ARG SERVE_VER=14.2.5
@@ -58,7 +59,7 @@ RUN cp -a /usr/share/zoneinfo                /_stash/zoneinfo \
  && cp -a /etc/ssl/certs/ca-certificates.crt /_stash/ca-certificates.crt
 
 # --- Helper stage: static BusyBox for /bin/sh (no runtime deps)
-FROM alpine:3.20 AS bb
+FROM alpine:${ALPINE_VERSION:-3.20} AS bb
 RUN apk add --no-cache busybox-static
 RUN mkdir -p /out/bin \
  && cp /bin/busybox.static /out/bin/busybox \
@@ -66,7 +67,7 @@ RUN mkdir -p /out/bin \
  && ln -s busybox /out/bin/sh
 
 # --- Helper stage: build a tiny static `getconf` that reads sysconf()
-FROM alpine:3.20 AS gc
+FROM alpine:${ALPINE_VERSION:-3.20} AS gc
 RUN apk add --no-cache build-base musl-dev
 WORKDIR /src
 # Minimal getconf clone: supports CLK_TCK and PAGESIZE (PAGE_SIZE alias)
