@@ -98,7 +98,7 @@ jobs:
         if: always()
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            echo "✅ Updated to Alpine ${{ steps.update.outputs.new_value }}."
+            echo "✅ Updated to Alpine ${{ steps.update.outputs.new_value }}." >> GITHUB_STEP_SUMMARY
           else
-            echo "✅ Already up to date (${% raw %}{{ steps.current.outputs.current }}{% endraw %})."
+            echo "✅ Already up to date (${% raw %}{{ steps.current.outputs.current }}{% endraw %})." >> GITHUB_STEP_SUMMARY
           fi

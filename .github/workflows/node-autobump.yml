@@ -134,8 +134,10 @@ jobs:
         if: always()
         run: |
           if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            printf "\n✅  Updated to Node %s and refreshed FROM defaults.\n" "${{ steps.update.outputs.new_value }}"
-            printf "🧱  Push triggers your Docker build workflow.\n\n"
+            {
+              printf "\n✅  Updated to Node %s and refreshed FROM defaults.\n" "${{ steps.update.outputs.new_value }}"
+              printf "🧱  Push triggers your Docker build workflow.\n\n"
+            } >> GITHUB_STEP_SUMMARY
           else
-            printf "\n✅  Node base image already up-to-date.\n\n"
+            printf "\n✅  Node base image already up-to-date.\n\n" >> GITHUB_STEP_SUMMARY
           fi
