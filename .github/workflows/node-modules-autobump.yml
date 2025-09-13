@@ -170,6 +170,7 @@ jobs:
           {
             if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
               echo "## ✅ Updated runtime tool versions"
+              echo "##🧱  Push triggers your Docker build workflow."
               echo ""
               echo '```'
               printf '%s\n' "${{ steps.update.outputs.changes }}"
