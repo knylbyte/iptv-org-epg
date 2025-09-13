@@ -140,4 +140,4 @@ jobs:
             else
               printf "\nℹ️  Node base image already up-to-date.\n\n"
             fi
-          } >> GITHUB_STEP_SUMMARY
+          } >> "$GITHUB_STEP_SUMMARY"
