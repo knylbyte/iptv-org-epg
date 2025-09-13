@@ -87,7 +87,7 @@ RUN mkdir -p /out \
  && gcc -Os -static -s -o /out/getconf getconf.c
 
 # ---------- Runner (Distroless) ----------
-FROM gcr.io/distroless/nodejs${NODE_VERSION:-24}: AS runner
+FROM gcr.io/distroless/nodejs${NODE_VERSION:-24} AS runner
 
 # Default settings, can be overridden via env vars
 
