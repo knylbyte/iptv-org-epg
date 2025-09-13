@@ -135,11 +135,11 @@ jobs:
         run: |
           {
             if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-              echo "✅  Updated to Node ${{ steps.update.outputs.new_value }} and refreshed FROM defaults." 
-              echo "🧱  Push triggers your Docker build workflow."
+              echo "##✅  Updated to Node ${{ steps.update.outputs.new_value }} and refreshed FROM defaults." 
+              echo "##🧱  Push triggers your Docker build workflow."
               echo ""
             else
-              echo "ℹ️  Node base image already up-to-date -> Node v${{steps.current.outputs.current_major}}."
+              echo "##ℹ️  Node base image already up-to-date -> Node v${{steps.current.outputs.current_major}}."
               echo ""
             fi
           } >> "$GITHUB_STEP_SUMMARY"

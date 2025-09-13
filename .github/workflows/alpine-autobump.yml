@@ -107,10 +107,10 @@ jobs:
         run: |
           {
             if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-              echo "✅ Updated to Alpine ${{ steps.update.outputs.new_value }}."
+              echo "##✅ Updated to Alpine ${{ steps.update.outputs.new_value }}."
               echo ""
             else
-              echo "ℹ️ Already up to date -> Alpine v${{ steps.current.outputs.current }}"
+              echo "##ℹ️ Already up to date -> Alpine v${{ steps.current.outputs.current }}"
               echo ""
             fi
           } >> "$GITHUB_STEP_SUMMARY"
