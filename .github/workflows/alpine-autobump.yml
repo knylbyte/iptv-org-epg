@@ -109,6 +109,6 @@ jobs:
             if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
               echo "✅ Updated to Alpine ${{ steps.update.outputs.new_value }}."
             else
-              echo "ℹ️ Already up to date (${% raw %}{{ steps.current.outputs.current }}{% endraw %})."
+              echo "ℹ️ Already up to date ${{ steps.current.outputs.current }}."
             fi
           }
