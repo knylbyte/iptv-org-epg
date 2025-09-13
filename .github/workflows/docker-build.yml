@@ -3,8 +3,8 @@ name: Build Docker Image
 on:
   workflow_dispatch:
     inputs:
-      node_major:
-        description: 'Node + Modules autobump (optional)'
+      reason:
+        description: 'Reason for manual trigger (optional)'
         required: false
         default: ''
       channels_updatet:
@@ -35,11 +35,11 @@ jobs:
           - platform: linux/amd64
             runner: ubuntu-24.04
             tag_suffix: linux-amd64
-            # node_version: 24     # use default from Dockerfile
+            # node_version:        # use default from Dockerfile
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             tag_suffix: linux-arm64
-            # node_version: 24     # use default from Dockerfile
+            # node_version:        # use default from Dockerfile
           - platform: linux/arm/v7
             runner: ubuntu-24.04-arm
             tag_suffix: linux-armv7
