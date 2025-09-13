@@ -132,6 +132,7 @@ jobs:
 
       - name: Summary
         if: always()
+        shell: bash
         run: |
           {
             if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
