@@ -112,9 +112,6 @@ COPY --from=bb /out/bin /bin
 # ... and overwrite /bin/getconf with our static getconf binary
 COPY --from=gc /out/getconf /bin/getconf
 
-# Ensure /bin is in PATH (distroless usually has it, but this makes it explicit).
-ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-
 WORKDIR /epg
 
 # Copy only the essentials from builder
