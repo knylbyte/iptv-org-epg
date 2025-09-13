@@ -175,6 +175,7 @@ jobs:
               printf '%s\n' "${{ steps.update.outputs.changes }}"
               echo '```'
             else
-              echo "## ℹ️ Runtime tool versions already up-to-date"
+              echo "## ℹ️ Runtime tool versions already up-to-date."
+              echo ""
             fi
           } >> "$GITHUB_STEP_SUMMARY"
