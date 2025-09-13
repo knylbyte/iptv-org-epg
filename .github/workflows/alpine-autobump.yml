@@ -111,4 +111,4 @@ jobs:
             else
               echo "ℹ️ Already up to date ${{ steps.current.outputs.current }}."
             fi
-          }
+          } >> GITHUB_STEP_SUMMARY
