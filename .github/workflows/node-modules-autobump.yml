@@ -105,7 +105,6 @@ jobs:
 
           bump_arg () {
             local key="$1" ; local new="$2"
-            # Replace: ARG <KEY>=<anything>
             sed -i.bak -E "s/^(ARG[[:space:]]+${key}=).*/\1${new}/" "$file"
           }
 
@@ -134,13 +133,17 @@ jobs:
 
           if [[ "$updated" == "true" ]]; then
             echo "updated=true" >> "$GITHUB_OUTPUT"
-            printf "%s" "$(IFS=' | ' ; echo "${changes[*]}")" >> "$GITHUB_OUTPUT" 2>/dev/null || true
-            echo "changes=$(IFS=$'\n'; echo "${changes[*]}")" >> "$GITHUB_OUTPUT"
+            {
+              echo "changes<<__CHANGES__"
+              printf '%s\n' "${changes[@]}"
+              echo "__CHANGES__"
+            } >> "$GITHUB_OUTPUT"
             printf "✏️  Updated:\n%s\n" "$(printf '%s\n' "${changes[@]}")"
           else
             echo "updated=false" >> "$GITHUB_OUTPUT"
             echo "ℹ️  No updates needed."
           fi
+
 
       - name: Step 4 — Commit and push
         if: steps.update.outputs.updated == 'true'
@@ -149,12 +152,8 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add docker/Dockerfile
-          commit_msg="chore(docker): bump tool versions
-          
-          $(printf '%s\n' "${{ steps.update.outputs.changes }}")"
-          git commit -m "$commit_msg"
+          printf 'chore(docker): bump runtime tools\n\n%s\n' "${{ steps.update.outputs.changes }}" | git commit -F -
           git push
 
       - name: Step 5 — Trigger Docker Build via workflow_dispatch
@@ -162,21 +161,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # Passe ggf. den Namen deiner Build-Workflow-Datei an
           gh workflow run docker-build.yml --ref master -f reason="bumped runtime tools"
 
       - name: Summary
         if: always()
         shell: bash
         run: |
-          if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            {
+          {
+            if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
               echo "## ✅ Updated runtime tool versions"
               echo ""
               echo '```'
               printf '%s\n' "${{ steps.update.outputs.changes }}"
               echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "## ✅ Runtime tool versions already up-to-date" >> "$GITHUB_STEP_SUMMARY"
-          fi
+              else
+              echo "## ℹ️ Runtime tool versions already up-to-date"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

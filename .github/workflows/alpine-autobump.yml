@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Read current ALPINE_VERSION
+      - name: Step 1 - Read current ALPINE_VERSION
         id: current
         shell: bash
         run: |
@@ -35,7 +35,7 @@ jobs:
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "Current: $current"
 
-      - name: Fetch latest Alpine (latest-stable)
+      - name: Step 2 - Fetch latest Alpine (latest-stable)
         id: latest
         shell: bash
         env:
@@ -55,7 +55,7 @@ jobs:
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "Latest: $latest"
 
-      - name: Update Dockerfile if newer
+      - name: Step 3 - Update Dockerfile if newer
         id: update
         shell: bash
         run: |
@@ -83,7 +83,7 @@ jobs:
           echo "updated=true" >> "$GITHUB_OUTPUT"
           echo "new_value=$latest" >> "$GITHUB_OUTPUT"
 
-      - name: Commit and push
+      - name: Step 4 - Commit and push
         if: steps.update.outputs.updated == 'true'
         shell: bash
         run: |
@@ -94,11 +94,21 @@ jobs:
           git commit -m "chore(docker): bump ALPINE_VERSION to ${{ steps.update.outputs.new_value }}"
           git push
 
+      - name: Step 5 — Trigger Docker Build via workflow_dispatch
+        if: steps.update.outputs.updated == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run docker-build.yml --ref master -f reason="bumped alpine version -> ${{ steps.update.outputs.new_value }}"
+
+
       - name: Summary
         if: always()
         run: |
-          if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
-            echo "✅ Updated to Alpine ${{ steps.update.outputs.new_value }}." >> GITHUB_STEP_SUMMARY
-          else
-            echo "✅ Already up to date (${% raw %}{{ steps.current.outputs.current }}{% endraw %})." >> GITHUB_STEP_SUMMARY
-          fi
+          {
+            if [[ "${{ steps.update.outputs.updated }}" == "true" ]]; then
+              echo "✅ Updated to Alpine ${{ steps.update.outputs.new_value }}."
+            else
+              echo "ℹ️ Already up to date (${% raw %}{{ steps.current.outputs.current }}{% endraw %})."
+            fi
+          }
