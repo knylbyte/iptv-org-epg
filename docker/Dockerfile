@@ -3,7 +3,7 @@ ARG ALPINE_VERSION=3.22.2
 ARG NODE_VERSION=24
 ARG PM2_VER=6.0.14
 ARG SERVE_VER=14.2.5
-ARG TSX_VER=4.20.6
+ARG TSX_VER=4.21.0
 ARG CHRONOS_VER=0.0.1
 
 # --- Builder stage: use local repo and install deps ---
