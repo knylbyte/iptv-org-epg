@@ -69,6 +69,15 @@ jobs:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract NodeJS version
+        id: node-version
+        run: |
+          if [ -n "${NODE_VERSION}" ]; then
+            echo "arg=NODE_VERSION=${NODE_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          NODE_VERSION: ${{ matrix.node_version || '' }}
 
       - name: Build & Push ${{ matrix.platform }}
         uses: docker/build-push-action@v6
@@ -80,8 +89,7 @@ jobs:
           push: true
           tags: ${{ env.IMAGE }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-          build-args: |
-            NODE_VERSION=${{ matrix.node_version }}
+          build-args: ${{ steps.node-version.outputs.arg }}
           cache-from: type=gha,scope=epg-${{ matrix.tag_suffix }}
           cache-to:   type=gha,mode=max,scope=epg-${{ matrix.tag_suffix }}
 
