@@ -196,13 +196,17 @@ function buildMultiSiteInlineCode(siteList) {
     function stripTvEnvelope(file, writer) {
       return new Promise((resolve) => {
         const stream = fs.createReadStream(file, { encoding: 'utf8' });
+        const rxXml     = new RegExp('<\\\\?xml[^>]*?>', 'gi');
+        const rxDoctype = new RegExp('<!DOCTYPE[^>]*?>', 'gi');
+        const rxTvOpen  = new RegExp('<tv[^>]*>', 'gi');
+        const rxTvClose = new RegExp('<\\\\/tv>', 'gi');
         stream.on('data', (chunk) => {
           writer.write(
             chunk
-              .replace(/<\\?xml[^>]*?>/gi, '')
-              .replace(/<!DOCTYPE[^>]*?>/gi, '')
-              .replace(/<tv[^>]*>/gi, '')
-              .replace(/<\\/tv>/gi, '')
+              .replace(rxXml, '')
+              .replace(rxDoctype, '')
+              .replace(rxTvOpen, '')
+              .replace(rxTvClose, '')
           );
         });
         stream.on('end', resolve);
