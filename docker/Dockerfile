@@ -7,7 +7,7 @@ ARG TSX_VER=4.21.0
 ARG CHRONOS_VER=0.0.1
 
 # --- Builder stage: use local repo and install deps ---
-FROM node:${NODE_VERSION:-24}-alpine AS builder
+FROM node:${NODE_VERSION}-alpine AS builder
 
 ARG PM2_VER
 ARG SERVE_VER
@@ -58,7 +58,7 @@ RUN cp -a /usr/share/zoneinfo                /_stash/zoneinfo \
  && cp -a /etc/ssl/certs/ca-certificates.crt /_stash/ca-certificates.crt
 
 # --- Helper stage: static BusyBox for /bin/sh (no runtime deps)
-FROM alpine:${ALPINE_VERSION:-3.23.0} AS bb
+FROM alpine:${ALPINE_VERSION} AS bb
 RUN apk add --no-cache busybox-static
 RUN mkdir -p /out/bin \
  && cp /bin/busybox.static /out/bin/busybox \
@@ -66,7 +66,7 @@ RUN mkdir -p /out/bin \
  && ln -s busybox /out/bin/sh
 
 # --- Helper stage: build a tiny static `getconf` that reads sysconf()
-FROM alpine:${ALPINE_VERSION:-3.23.0} AS gc
+FROM alpine:${ALPINE_VERSION} AS gc
 RUN apk add --no-cache build-base musl-dev
 WORKDIR /src
 # Minimal getconf clone: supports CLK_TCK and PAGESIZE (PAGE_SIZE alias)
@@ -87,7 +87,7 @@ RUN mkdir -p /out \
  && gcc -Os -static -s -o /out/getconf getconf.c
 
 # ---------- Runner (Distroless) ----------
-FROM gcr.io/distroless/nodejs${NODE_VERSION:-24} AS runner
+FROM gcr.io/distroless/nodejs${NODE_VERSION} AS runner
 
 # Default settings, can be overridden via env vars
 
