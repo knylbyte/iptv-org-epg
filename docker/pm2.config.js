@@ -193,23 +193,36 @@ function buildMultiSiteInlineCode(siteList) {
       return output;
     }
 
-    function stripTvEnvelope(file, writer) {
+    function appendNodes(file, writer, regex) {
       return new Promise((resolve) => {
         const stream = fs.createReadStream(file, { encoding: 'utf8' });
         const rxXml     = new RegExp('<\\\\?xml[^>]*?>', 'gi');
         const rxDoctype = new RegExp('<!DOCTYPE[^>]*?>', 'gi');
         const rxTvOpen  = new RegExp('<tv[^>]*>', 'gi');
         const rxTvClose = new RegExp('<\\\\/tv>', 'gi');
+        let buffer = '';
+        const flush = () => {
+          let m;
+          let lastIndex = 0;
+          while ((m = regex.exec(buffer)) !== null) {
+            writer.write(m[0]);
+            writer.write('\\n');
+            lastIndex = regex.lastIndex;
+          }
+          if (lastIndex > 0) buffer = buffer.slice(lastIndex);
+        };
         stream.on('data', (chunk) => {
-          writer.write(
-            chunk
-              .replace(rxXml, '')
-              .replace(rxDoctype, '')
-              .replace(rxTvOpen, '')
-              .replace(rxTvClose, '')
-          );
+          buffer += chunk
+            .replace(rxXml, '')
+            .replace(rxDoctype, '')
+            .replace(rxTvOpen, '')
+            .replace(rxTvClose, '');
+          flush();
         });
-        stream.on('end', resolve);
+        stream.on('end', () => {
+          flush();
+          resolve();
+        });
         stream.on('error', (err) => {
           console.warn('[multi-site] merge read failed:', file, err && err.message || err);
           resolve();
@@ -219,13 +232,19 @@ function buildMultiSiteInlineCode(siteList) {
 
     async function mergeGuides(sources, dest) {
       const writer = fs.createWriteStream(dest, { encoding: 'utf8' });
+      const rxChannel  = new RegExp('<channel\\b[\\\\s\\\\S]*?<\\\\/channel>', 'gi');
+      const rxProgram  = new RegExp('<programme\\b[\\\\s\\\\S]*?<\\\\/programme>', 'gi');
       writer.write('<?xml version="1.0" encoding="UTF-8"?>\\n<tv>\\n');
       for (const src of sources) {
         if (!fs.existsSync(src)) {
           console.warn('[multi-site] skipping missing guide:', src);
           continue;
         }
-        await stripTvEnvelope(src, writer);
+        await appendNodes(src, writer, rxChannel);
+      }
+      for (const src of sources) {
+        if (!fs.existsSync(src)) continue;
+        await appendNodes(src, writer, rxProgram);
       }
       writer.write('</tv>\\n');
       await new Promise((resolve, reject) => {
