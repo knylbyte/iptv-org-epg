@@ -2,10 +2,8 @@
 // Distroless-ready PM2 config (no npm/npx at runtime) with list support in SITE and CLANG.
 //
 // Multi-site behavior (final):
-// - If SITE has > 1 entries: build /tmp/tmp.channels.xml by scanning /epg/sites/<site>/** for *.channels.xml,
-//   extracting <channel> nodes into a single combined channels file, then run ONE grab with --channels /tmp/tmp.channels.xml.
-//   Caching: reuse /tmp/tmp.channels.xml only if /tmp/tmp.channels.meta.json matches SITE list, file list, and max mtime.
-// - If SITE has exactly 1 entry: run ONE grab with --site <the-one-site> (no combine step).
+// - If SITE has > 1 entries: sequentially grab each site to /public/<site>/guide.xml, then stream-merge them into /public/guide.xml.
+// - If SITE has exactly 1 entry: run ONE grab with --site <the-one-site> -> /public/guide.xml.
 // - If SITE is empty: fallback to channels.xml or (if ALL_SITES) all.channels.xml.
 //
 // Precedence:
@@ -97,7 +95,7 @@ const LANG_CSV   = CLANG_LIST.length ? CLANG_LIST.join(',') : undefined;
 
 // --- build grab args ---
 // Only use CLI flags; do NOT rely on env in the child process.
-const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
+const buildGrabArgs = ({ site, useChannelsXml, combined = false, output }) => {
   const args = [];
 
   if (combined) {
@@ -110,7 +108,8 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false }) => {
     args.push('--channels', 'sites/channels.xml');
   }
 
-  args.push('--output', 'public/guide.xml');
+  const outputPath = output || 'public/guide.xml';
+  args.push('--output', outputPath);
   args.push('--maxConnections', String(MAX_CONNECTIONS));
   if (DAYS    !== undefined) args.push('--days', String(DAYS));
   if (TIMEOUT !== undefined) args.push('--timeout', String(TIMEOUT));
@@ -146,192 +145,112 @@ function makeSanitizedGrabInlineCode(grabArgs) {
   `;
 }
 
-// --- combined builder with mtime-based cache (no XML markers) ---
-function buildCombinerCode() {
+// --- multi-site runner: per-site guides + merged guide.xml ---
+function buildMultiSiteInlineCode(siteList) {
+  const ARG_SITE = '__SITE_PLACEHOLDER__';
+  const ARG_OUT  = '__OUTPUT_PLACEHOLDER__';
+  const grabArgsTemplate = buildGrabArgs({
+    site: ARG_SITE,
+    useChannelsXml: false,
+    combined: false,
+    output: ARG_OUT
+  });
+
   return String.raw`
     const fs = require('fs');
     const path = require('path');
     const cp = require('child_process');
 
-    const sites = Array.from(new Set(${JSON.stringify(SITE_LIST)})).sort();
-    const baseDir  = '/epg/sites';
-    const tmpXml   = '/tmp/tmp.channels.xml';
-    const tmpMeta  = '/tmp/tmp.channels.meta.json';
+    const sites = ${JSON.stringify(siteList)};
+    const template = ${JSON.stringify(grabArgsTemplate)};
+    const ARG_SITE = '${ARG_SITE}';
+    const ARG_OUT  = '${ARG_OUT}';
 
-    function walk(dir, out) {
-      let entries;
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch (err) {
-        console.warn('[multi-site] readdir failed:', dir, err && err.message || err);
-        return;
-      }
-      for (const ent of entries) {
-        const p = path.join(dir, ent.name);
-        if (ent.isDirectory()) {
-          walk(p, out);
-        } else if (/\.channels\.xml$/i.test(ent.name)) {
-          out.push(p);
-        }
-      }
-    }
+    const makeArgs = (site, output) => template.map((arg) => {
+      if (arg === ARG_SITE) return site;
+      if (arg === ARG_OUT)  return output;
+      return arg;
+    });
 
-    function collectSources(siteList) {
-      const files = [];
-      for (const s of siteList) {
-        const siteDir = path.join(baseDir, s);
-        try {
-          const st = fs.statSync(siteDir);
-          if (st.isDirectory()) {
-            const before = files.length;
-            walk(siteDir, files);
-            const added = files.length - before;
-            if (added === 0) {
-              console.warn('[multi-site] No .channels.xml files found under', siteDir);
-            }
-          } else {
-            console.warn('[multi-site] Not a directory:', siteDir);
-          }
-        } catch {
-          console.warn('[multi-site] Missing site directory:', siteDir);
-        }
-      }
-      files.sort();
-      let maxMtimeMs = 0;
-      for (const f of files) {
-        try {
-          const st = fs.statSync(f);
-          const m  = Number(st.mtimeMs) || 0;
-          if (m > maxMtimeMs) maxMtimeMs = m;
-        } catch {}
-      }
-      if (files.length === 0) {
-        console.warn('[multi-site] No .channels.xml files found for', JSON.stringify(siteList));
-      }
-      return { files, maxMtimeMs };
-    }
+    async function grabOne(site) {
+      const outputDir = path.join('/epg/public', site);
+      const output    = path.join(outputDir, 'guide.xml');
+      fs.mkdirSync(outputDir, { recursive: true });
 
-    function readMeta() {
-      try {
-        if (!fs.existsSync(tmpXml) || !fs.existsSync(tmpMeta)) return null;
-        const meta = JSON.parse(fs.readFileSync(tmpMeta, 'utf8'));
-        if (!meta || !Array.isArray(meta.sites) || !Array.isArray(meta.files)) return null;
-        return meta;
-      } catch {
-        return null;
-      }
-    }
-
-    function writeMeta(meta) {
-      try { fs.writeFileSync(tmpMeta, JSON.stringify(meta, null, 2), 'utf8'); } catch {}
-    }
-
-    const current = collectSources(sites);
-    let reuse = false;
-    const meta = readMeta();
-    if (meta) {
-      const sameSites = JSON.stringify(meta.sites) === JSON.stringify(sites);
-      const sameFiles = JSON.stringify(meta.files) === JSON.stringify(current.files);
-      const upToDate  = Number(meta.maxMtimeMs) >= current.maxMtimeMs;
-      if (sameSites && sameFiles && upToDate) {
-        reuse = true;
-        console.log('[multi-site] Reusing cached /tmp/tmp.channels.xml');
-      }
-    }
-
-    async function extractChannelsToWriter(file, writer) {
-      return new Promise((resolve) => {
-        const stream = fs.createReadStream(file, { encoding: 'utf8' });
-        let buffer = '';
-
-        const flushMatches = () => {
-          // Build via RegExp constructor to avoid delimiter conflicts inside inline eval
-          const re = new RegExp('<channel\\b[\\s\\S]*?<\\/channel>', 'gi');
-          let lastIndex = 0;
-          let m;
-          while ((m = re.exec(buffer)) !== null) {
-            writer.write(m[0]);
-            writer.write('\n');
-            lastIndex = re.lastIndex;
-          }
-          if (lastIndex > 0) {
-            buffer = buffer.slice(lastIndex);
-          }
-        };
-
-        stream.on('data', (chunk) => {
-          buffer += chunk
-            .replace(/<\?xml[^>]*?>/gi, '')
-            .replace(/<channels[^>]*>/gi, '')
-            .replace(/<\/channels>/gi, '');
-          // Keep only trailing partial data to avoid unbounded memory growth
-          if (buffer.length > 1_000_000) {
-            buffer = buffer.slice(-500_000);
-          }
-          flushMatches();
-        });
-
-        stream.on('end', () => {
-          flushMatches();
-          resolve();
-        });
-
-        stream.on('error', (err) => {
-          console.warn('[multi-site] read failed:', file, err && err.message || err);
-          resolve();
-        });
-      });
-    }
-
-    async function rebuildCombined() {
-      const writer = fs.createWriteStream(tmpXml, { encoding: 'utf8' });
-      writer.write('<?xml version="1.0" encoding="UTF-8"?>\n<channels>\n');
-
-      for (const f of current.files) {
-        await extractChannelsToWriter(f, writer);
-      }
-
-      writer.write('</channels>\n');
-      await new Promise((resolve, reject) => {
-        writer.end(resolve);
-        writer.on('error', reject);
-      }).catch((err) => {
-        console.warn('[multi-site] write failed:', err && err.message || err);
-      });
-    }
-
-    async function main() {
-      if (!reuse) {
-        try {
-          await rebuildCombined();
-          console.log('[multi-site] Rebuilt /tmp/tmp.channels.xml from', current.files.length, 'file(s) (streamed).');
-          writeMeta({ version: 1, builtAt: Date.now(), sites, files: current.files, maxMtimeMs: current.maxMtimeMs });
-        } catch (err) {
-          console.warn('[multi-site] rebuild failed:', err && err.message || err);
-        }
-      }
-
-      // sanitized spawn: remove GZIP/CURL from env so only CLI flags matter
       const env = { ...process.env };
       delete env.GZIP;
       delete env.CURL;
 
-      const args = ${JSON.stringify(buildGrabArgs({ site: undefined, useChannelsXml: false, combined: true }))};
+      const args = makeArgs(site, output);
       const res = cp.spawnSync(process.execPath, ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
         stdio: 'inherit',
         cwd: '/epg',
         env
       });
-      process.exit(res.status ?? 0);
+      if (res.status !== 0) {
+        console.warn('[multi-site] grab failed for', site, 'status', res.status);
+      }
+      return output;
     }
 
-    main();
+    function stripTvEnvelope(file, writer) {
+      return new Promise((resolve) => {
+        const stream = fs.createReadStream(file, { encoding: 'utf8' });
+        stream.on('data', (chunk) => {
+          writer.write(
+            chunk
+              .replace(/<\\?xml[^>]*?>/gi, '')
+              .replace(/<!DOCTYPE[^>]*?>/gi, '')
+              .replace(/<tv[^>]*>/gi, '')
+              .replace(/<\\/tv>/gi, '')
+          );
+        });
+        stream.on('end', resolve);
+        stream.on('error', (err) => {
+          console.warn('[multi-site] merge read failed:', file, err && err.message || err);
+          resolve();
+        });
+      });
+    }
+
+    async function mergeGuides(sources, dest) {
+      const writer = fs.createWriteStream(dest, { encoding: 'utf8' });
+      writer.write('<?xml version="1.0" encoding="UTF-8"?>\\n<tv>\\n');
+      for (const src of sources) {
+        if (!fs.existsSync(src)) {
+          console.warn('[multi-site] skipping missing guide:', src);
+          continue;
+        }
+        await stripTvEnvelope(src, writer);
+      }
+      writer.write('</tv>\\n');
+      await new Promise((resolve, reject) => {
+        writer.end(resolve);
+        writer.on('error', reject);
+      }).catch((err) => {
+        console.warn('[multi-site] merge write failed:', err && err.message || err);
+      });
+    }
+
+    async function main() {
+      const outputs = [];
+      for (const site of sites) {
+        outputs.push(await grabOne(site));
+      }
+      await mergeGuides(outputs, '/epg/public/guide.xml');
+      console.log('[multi-site] merged', outputs.length, 'guide(s) into /epg/public/guide.xml');
+    }
+
+    main().catch((err) => {
+      console.error('[multi-site] fatal error:', err && err.stack || err);
+      process.exit(1);
+    });
   `;
 }
 
-function makeCombinedExecString() {
-  const code   = buildCombinerCode();
-  const b64    = Buffer.from(code, 'utf8').toString('base64');
+function makeMultiSiteExecString(siteList) {
+  const code = buildMultiSiteInlineCode(siteList);
+  const b64  = Buffer.from(code, 'utf8').toString('base64');
   return `${NODE} -e "eval(Buffer.from('${b64}','base64').toString())"`;
 }
 
@@ -350,22 +269,22 @@ const apps = [
 
 // Precedence & modes:
 // - SITE >=1 → ignore ALL_SITES
-//   - SITE >1 → combined
+//   - SITE >1 → per-site guides + merged guide.xml
 //   - SITE =1 → single-site
 // - SITE =0 → fallback
 const siteCount = SITE_LIST.length;
 
 if (siteCount >= 1) {
   if (siteCount > 1) {
-    // combined multi-site mode (cached in /tmp)
-    const combinedExec = makeCombinedExecString();
-    const inlineCode   = buildCombinerCode();
+    // multi-site mode: per-site outputs + merged guide.xml
+    const inlineCode = buildMultiSiteInlineCode(SITE_LIST);
+    const execStr    = makeMultiSiteExecString(SITE_LIST);
 
     apps.push({
       name: 'grab',
       cwd: '/epg',
       script: NODE,
-      args: [CHRONOS_JS, '--execute', combinedExec, '--pattern', CRON_SCHEDULE, '--log'],
+      args: [CHRONOS_JS, '--execute', execStr, '--pattern', CRON_SCHEDULE, '--log'],
       interpreter: 'none',
       autorestart: true,
       exp_backoff_restart_delay: 5000,
