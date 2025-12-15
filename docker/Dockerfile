@@ -7,7 +7,7 @@ ARG TSX_VER=4.21.0
 ARG CHRONOS_VER=0.0.1
 
 # --- Builder stage: use local repo and install deps ---
-FROM node:${NODE_VERSION}-alpine AS builder
+FROM node:${NODE_VERSION:-24}-alpine AS builder
 
 ARG PM2_VER
 ARG SERVE_VER
@@ -89,7 +89,7 @@ RUN mkdir -p /out \
  && gcc -Os -static -s -o /out/getconf getconf.c
 
 # ---------- Runner (Distroless) ----------
-FROM gcr.io/distroless/nodejs${NODE_VERSION} AS runner
+FROM gcr.io/distroless/nodejs${NODE_VERSION:-24} AS runner
 
 # Default settings, can be overridden via env vars
 
