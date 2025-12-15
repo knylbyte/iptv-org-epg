@@ -80,6 +80,8 @@ RUN printf '%s\n' \
 '    long v=sysconf(_SC_CLK_TCK); if(v<0) return 1; printf("%ld\\n",v); return 0;}' \
 '  if(!strcmp(argv[1],"PAGESIZE")||!strcmp(argv[1],"PAGE_SIZE")){' \
 '    long v=sysconf(_SC_PAGESIZE); if(v<0) return 1; printf("%ld\\n",v); return 0;}' \
+'  if(!strcmp(argv[1],"LONG_BIT")){' \
+'    printf("%d\\n",(int)(8*sizeof(long))); return 0;}' \
 '  fprintf(stderr,"getconf: unsupported: %s\\n",argv[1]); return 1;}' \
 > getconf.c
 # Build static so it runs in distroless on any arch (amd64/arm64/armv7)

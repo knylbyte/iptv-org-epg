@@ -148,7 +148,7 @@ function makeSanitizedGrabInlineCode(grabArgs) {
 
 // --- combined builder with mtime-based cache (no XML markers) ---
 function buildCombinerCode() {
-  return `
+  return String.raw`
     const fs = require('fs');
     const path = require('path');
     const cp = require('child_process');
@@ -162,14 +162,15 @@ function buildCombinerCode() {
       let entries;
       try {
         entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
+      } catch (err) {
+        console.warn('[multi-site] readdir failed:', dir, err && err.message || err);
         return;
       }
       for (const ent of entries) {
         const p = path.join(dir, ent.name);
         if (ent.isDirectory()) {
           walk(p, out);
-        } else if (/\\.channels\\.xml$/i.test(ent.name)) {
+        } else if (/\.channels\.xml$/i.test(ent.name)) {
           out.push(p);
         }
       }
@@ -182,7 +183,12 @@ function buildCombinerCode() {
         try {
           const st = fs.statSync(siteDir);
           if (st.isDirectory()) {
+            const before = files.length;
             walk(siteDir, files);
+            const added = files.length - before;
+            if (added === 0) {
+              console.warn('[multi-site] No .channels.xml files found under', siteDir);
+            }
           } else {
             console.warn('[multi-site] Not a directory:', siteDir);
           }
@@ -198,6 +204,9 @@ function buildCombinerCode() {
           const m  = Number(st.mtimeMs) || 0;
           if (m > maxMtimeMs) maxMtimeMs = m;
         } catch {}
+      }
+      if (files.length === 0) {
+        console.warn('[multi-site] No .channels.xml files found for', JSON.stringify(siteList));
       }
       return { files, maxMtimeMs };
     }
@@ -230,87 +239,93 @@ function buildCombinerCode() {
       }
     }
 
-    if (!reuse) {
-      async function extractChannelsToWriter(file, writer) {
-        return new Promise((resolve) => {
-          const stream = fs.createReadStream(file, { encoding: 'utf8' });
-          let buffer = '';
+    async function extractChannelsToWriter(file, writer) {
+      return new Promise((resolve) => {
+        const stream = fs.createReadStream(file, { encoding: 'utf8' });
+        let buffer = '';
 
-          const flushMatches = () => {
-            // Build via RegExp constructor to avoid delimiter conflicts inside inline eval
-            const re = new RegExp('<channel\\b[\\s\\S]*?<\\/channel>', 'gi');
-            let lastIndex = 0;
-            let m;
-            while ((m = re.exec(buffer)) !== null) {
-              writer.write(m[0]);
-              writer.write('\n');
-              lastIndex = re.lastIndex;
-            }
-            if (lastIndex > 0) {
-              buffer = buffer.slice(lastIndex);
-            }
-          };
+        const flushMatches = () => {
+          // Build via RegExp constructor to avoid delimiter conflicts inside inline eval
+          const re = new RegExp('<channel\\b[\\s\\S]*?<\\/channel>', 'gi');
+          let lastIndex = 0;
+          let m;
+          while ((m = re.exec(buffer)) !== null) {
+            writer.write(m[0]);
+            writer.write('\n');
+            lastIndex = re.lastIndex;
+          }
+          if (lastIndex > 0) {
+            buffer = buffer.slice(lastIndex);
+          }
+        };
 
-          stream.on('data', (chunk) => {
-            buffer += chunk
-              .replace(/<\?xml[^>]*?>/gi, '')
-              .replace(/<channels[^>]*>/gi, '')
-              .replace(/<\/channels>/gi, '');
-            // Keep only trailing partial data to avoid unbounded memory growth
-            if (buffer.length > 1_000_000) {
-              buffer = buffer.slice(-500_000);
-            }
-            flushMatches();
-          });
-
-          stream.on('end', () => {
-            flushMatches();
-            resolve();
-          });
-
-          stream.on('error', (err) => {
-            console.warn('[multi-site] read failed:', file, err && err.message || err);
-            resolve();
-          });
+        stream.on('data', (chunk) => {
+          buffer += chunk
+            .replace(/<\?xml[^>]*?>/gi, '')
+            .replace(/<channels[^>]*>/gi, '')
+            .replace(/<\/channels>/gi, '');
+          // Keep only trailing partial data to avoid unbounded memory growth
+          if (buffer.length > 1_000_000) {
+            buffer = buffer.slice(-500_000);
+          }
+          flushMatches();
         });
-      }
 
-      async function rebuildCombined() {
-        const writer = fs.createWriteStream(tmpXml, { encoding: 'utf8' });
-        writer.write('<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<channels>\n');
-
-        for (const f of current.files) {
-          await extractChannelsToWriter(f, writer);
-        }
-
-        writer.write('</channels>\n');
-        await new Promise((resolve, reject) => {
-          writer.end(resolve);
-          writer.on('error', reject);
-        }).catch((err) => {
-          console.warn('[multi-site] write failed:', err && err.message || err);
+        stream.on('end', () => {
+          flushMatches();
+          resolve();
         });
-      }
 
-      rebuildCombined().then(() => {
-        console.log('[multi-site] Rebuilt /tmp/tmp.channels.xml from', current.files.length, 'file(s) (streamed).');
-        writeMeta({ version: 1, builtAt: Date.now(), sites, files: current.files, maxMtimeMs: current.maxMtimeMs });
-      }).catch((err) => {
-        console.warn('[multi-site] rebuild failed:', err && err.message || err);
+        stream.on('error', (err) => {
+          console.warn('[multi-site] read failed:', file, err && err.message || err);
+          resolve();
+        });
       });
     }
-    // sanitized spawn: remove GZIP/CURL from env so only CLI flags matter
-    const env = { ...process.env };
-    delete env.GZIP;
-    delete env.CURL;
 
-    const args = ${JSON.stringify(buildGrabArgs({ site: undefined, useChannelsXml: false, combined: true }))};
-    const res = cp.spawnSync(process.execPath, ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
-      stdio: 'inherit',
-      cwd: '/epg',
-      env
-    });
-    process.exit(res.status ?? 0);
+    async function rebuildCombined() {
+      const writer = fs.createWriteStream(tmpXml, { encoding: 'utf8' });
+      writer.write('<?xml version="1.0" encoding="UTF-8"?>\n<channels>\n');
+
+      for (const f of current.files) {
+        await extractChannelsToWriter(f, writer);
+      }
+
+      writer.write('</channels>\n');
+      await new Promise((resolve, reject) => {
+        writer.end(resolve);
+        writer.on('error', reject);
+      }).catch((err) => {
+        console.warn('[multi-site] write failed:', err && err.message || err);
+      });
+    }
+
+    async function main() {
+      if (!reuse) {
+        try {
+          await rebuildCombined();
+          console.log('[multi-site] Rebuilt /tmp/tmp.channels.xml from', current.files.length, 'file(s) (streamed).');
+          writeMeta({ version: 1, builtAt: Date.now(), sites, files: current.files, maxMtimeMs: current.maxMtimeMs });
+        } catch (err) {
+          console.warn('[multi-site] rebuild failed:', err && err.message || err);
+        }
+      }
+
+      // sanitized spawn: remove GZIP/CURL from env so only CLI flags matter
+      const env = { ...process.env };
+      delete env.GZIP;
+      delete env.CURL;
+
+      const args = ${JSON.stringify(buildGrabArgs({ site: undefined, useChannelsXml: false, combined: true }))};
+      const res = cp.spawnSync(process.execPath, ['${TSX_JS}', 'scripts/commands/epg/grab.ts', ...args], {
+        stdio: 'inherit',
+        cwd: '/epg',
+        env
+      });
+      process.exit(res.status ?? 0);
+    }
+
+    main();
   `;
 }
 
