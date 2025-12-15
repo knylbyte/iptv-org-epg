@@ -237,7 +237,8 @@ function buildCombinerCode() {
           let buffer = '';
 
           const flushMatches = () => {
-            const re = /<channel\b[\s\S]*?<\/channel>/gi;
+            // Build via RegExp constructor to avoid delimiter conflicts inside inline eval
+            const re = new RegExp('<channel\\b[\\s\\S]*?<\\/channel>', 'gi');
             let lastIndex = 0;
             let m;
             while ((m = re.exec(buffer)) !== null) {
