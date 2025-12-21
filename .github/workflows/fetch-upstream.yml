@@ -18,7 +18,7 @@ jobs:
           ref: master
           fetch-depth: 0
 
-      - name: Sync master from upstream (exclude .github)
+      - name: Sync master from upstream (exclude local overrides)
         env:
           TARGET_BRANCH: master
           UPSTREAM_REPO: iptv-org/epg
@@ -45,9 +45,14 @@ jobs:
             exit 0
           fi
 
-          # Bring in upstream changes for all paths except .github.
-          git checkout "upstream/${UPSTREAM_BRANCH}" -- . ':(exclude).github'
+          # Bring in upstream changes for all paths except local overrides.
+          EXCLUDES=(
+            ':(exclude).github'
+            ':(exclude)README.md'
+            ':(exclude)Dockerfile'
+          )
+          git checkout "upstream/${UPSTREAM_BRANCH}" -- . "${EXCLUDES[@]}"
 
           git add -A
-          git commit -m "chore: sync upstream (exclude .github)"
+          git commit -m "chore: sync upstream (exclude local overrides)"
           git push
