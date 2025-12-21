@@ -15,10 +15,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: master
           fetch-depth: 0
 
       - name: Sync master from upstream (exclude .github)
         env:
+          TARGET_BRANCH: master
           UPSTREAM_REPO: iptv-org/epg
           UPSTREAM_BRANCH: master
         run: |
@@ -33,6 +35,7 @@ jobs:
             git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
           fi
 
+          git checkout "${TARGET_BRANCH}"
           git fetch upstream "${UPSTREAM_BRANCH}"
 
           # Create a merge state that records upstream history without touching files.
