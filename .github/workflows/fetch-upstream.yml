@@ -17,14 +17,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Configure merge driver for .github overrides
+      - name: Sync master from upstream (exclude .github)
+        env:
+          UPSTREAM_REPO: iptv-org/epg
+          UPSTREAM_BRANCH: master
         run: |
-          git config merge.ours.driver true
+          set -euo pipefail
 
-      - name: Sync master via Fork-Sync action
-        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
-        with:
-          target_sync_branch: master
-          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
-          upstream_sync_repo: iptv-org/epg
-          upstream_sync_branch: master
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git remote get-url upstream >/dev/null 2>&1; then
+            git remote set-url upstream "https://github.com/${UPSTREAM_REPO}.git"
+          else
+            git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          fi
+
+          git fetch upstream "${UPSTREAM_BRANCH}"
+
+          # Create a merge state that records upstream history without touching files.
+          git merge --no-commit -s ours "upstream/${UPSTREAM_BRANCH}"
+          if ! git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+            echo "Already up to date."
+            exit 0
+          fi
+
+          # Bring in upstream changes for all paths except .github.
+          git checkout "upstream/${UPSTREAM_BRANCH}" -- . ':(exclude).github'
+
+          git add -A
+          git commit -m "chore: sync upstream (exclude .github)"
+          git push
