@@ -1,0 +1,2 @@
+# Keep local GitHub workflow/config changes when syncing from upstream.
+.github/** merge=ours

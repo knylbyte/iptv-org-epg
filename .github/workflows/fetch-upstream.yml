@@ -17,6 +17,10 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Configure merge driver for .github overrides
+        run: |
+          git config merge.ours.driver true
+
       - name: Sync master via Fork-Sync action
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4.1
         with:
