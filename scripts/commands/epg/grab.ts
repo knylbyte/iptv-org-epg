@@ -51,6 +51,7 @@ program
       .argParser(parseNumber)
       .env('MAX_CONNECTIONS')
   )
+  .addOption(new Option('--fillGaps', 'Fill schedule gaps with a dummy program').env('FILL_GAPS'))
   .addOption(new Option('--gzip', 'Create a compressed version of the guide as well').env('GZIP'))
   .addOption(new Option('--curl', 'Display each request as CURL').env('CURL'))
   .addOption(new Option('--debug', 'Enable debug mode').env('DEBUG'))
@@ -69,6 +70,7 @@ interface GrabOptions {
   lang?: string
   days?: number
   proxy?: string
+  fillGaps?: boolean
 }
 
 interface ChannelGroupInfo {
@@ -89,6 +91,14 @@ const DEFAULT_GAP_TITLE = 'Off Air'
 const GAP_TITLES_PATH = path.resolve(ROOT_DIR, 'scripts/data/gap_titles.json')
 
 const options: GrabOptions = program.opts()
+
+function parseBoolean(value: unknown, defaultValue = false): boolean {
+  if (value === undefined) return defaultValue
+  if (typeof value === 'boolean') return value
+  const normalized = String(value).trim().toLowerCase()
+  if (!normalized) return defaultValue
+  return !['0', 'false', 'no', 'off', 'null', 'undefined'].includes(normalized)
+}
 
 async function main() {
   if (typeof options.site !== 'string' && typeof options.channels !== 'string')
@@ -306,13 +316,16 @@ async function main() {
 
   await Promise.all(requests.all())
 
-  const gapTitlesByLang = loadGapTitles()
-  fillProgramGaps({
-    programs,
-    channelGroupInfoByKey,
-    channelRangeBySite,
-    gapTitlesByLang
-  })
+  const fillGaps = parseBoolean(options.fillGaps, defaultConfig.fillGaps || false)
+  if (fillGaps) {
+    const gapTitlesByLang = loadGapTitles()
+    fillProgramGaps({
+      programs,
+      channelGroupInfoByKey,
+      channelRangeBySite,
+      gapTitlesByLang
+    })
+  }
 
   const output = globalConfig.output || defaultConfig.output
 

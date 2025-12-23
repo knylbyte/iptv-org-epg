@@ -64,6 +64,7 @@ Options:
   -x, --proxy <url>             Use the specified proxy (example: "socks5://username:password@127.0.0.1:1234")
   --days <days>                 Number of days for which the program will be loaded (defaults to the value from the site config)
   --maxConnections <number>     Number of concurrent requests (default: 1)
+  --fillGaps                    Fill schedule gaps with a dummy program (default: false)
   --gzip                        Specifies whether or not to create a compressed version of the guide (default: false)
   --curl                        Display each request as CURL (default: false)
 ```
@@ -167,6 +168,7 @@ services:
       PORT: 3000                   # port for web server
       RUN_AT_STARTUP: "true"       # execute once directly at startup
       MAX_CONNECTIONS: 1           # performance/output options (supported by the grabber)
+      FILL_GAPS: "false"           # fill schedule gaps with dummy entries
       GZIP: "false"                # additionally generate guide.xml.gz if "true"
       ALL_SITES: false             # fetch all sites, filtered by language
       CLANG: >-
@@ -217,6 +219,7 @@ docker run \
 -e SITE='["example.com", "epg.io"]' \
 -e ALL_SITES=true \
 -e CLANG='["en", "es"]' \
+-e FILL_GAPS=true \
 -e GZIP=true \
 -e CURL=true \
 -e PROXY="socks5://127.0.0.1:1234" \
@@ -233,6 +236,7 @@ ghcr.io/iptv-org/epg:latest
 | SITE            | Specific website(s) from SITES.md (default: empty)                                                                 |
 | ALL_SITES       | Fetches all sites by iterates and merging all site channel lists under `/epg/sites` (default: false)               |
 | CLANG           | Language filter (ISO 639-1 codes, e.g., "en,es") (default: undefined)                                              |
+| FILL_GAPS       | Fill schedule gaps with a dummy program (default: false)                                                           |
 | GZIP            | Boolean value indicating whether to create a compressed version of the guide (default: false)                      |
 | CURL            | Display each request as CURL (default: false)                                                                      |
 | PROXY           | Use the specified proxy                                                                                            |

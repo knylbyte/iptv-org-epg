@@ -3,6 +3,7 @@ export default {
   days: 1,
   delay: 0,
   maxConnections: 1,
+  fillGaps: false,
   curl: false,
   gzip: false,
   debug: false,

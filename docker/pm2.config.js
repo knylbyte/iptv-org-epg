@@ -84,6 +84,7 @@ const PORT            = envInt(process.env.PORT) || 3000;
 const MAX_CONNECTIONS = envInt(process.env.MAX_CONNECTIONS) ?? 1;
 const GZIP            = envBool(process.env.GZIP, false);
 const CURL            = envBool(process.env.CURL, false);
+const FILL_GAPS       = envBool(process.env.FILL_GAPS, false);
 const RUN_AT_STARTUP  = envBool(process.env.RUN_AT_STARTUP, true);
 const TIMEOUT         = envInt(process.env.TIMEOUT) || 30000;
 const DELAY           = envInt(process.env.DELAY);
@@ -119,6 +120,7 @@ const buildGrabArgs = ({ site, useChannelsXml, combined = false, output }) => {
   if (LANG_CSV)              args.push('--lang', LANG_CSV);
   if (GZIP)                  args.push('--gzip');
   if (CURL)                  args.push('--curl');
+  if (FILL_GAPS)             args.push('--fillGaps');
 
   return args;
 };
