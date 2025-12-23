@@ -220,8 +220,8 @@ async function main() {
 
     const days = globalConfig.days || config.days
     const currDate = dayjs.utc(process.env.CURR_DATE || new Date().toISOString())
-    const rangeStart = currDate.valueOf()
-    const rangeEnd = currDate.add(days, 'd').valueOf()
+    const rangeStart = currDate.startOf('day').valueOf()
+    const rangeEnd = currDate.startOf('day').add(days, 'd').valueOf()
     const channelLang = channel.lang || DEFAULT_LANG
     const groupKey = buildGroupKey(channel.xmltv_id, channel.site, channelLang)
     if (!channelGroupInfoByKey.has(groupKey)) {
