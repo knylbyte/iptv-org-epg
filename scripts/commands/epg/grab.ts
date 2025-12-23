@@ -379,9 +379,10 @@ function fillProgramGaps({
   channelRangeBySite: Map<string, ChannelRangeInfo>
   gapTitlesByLang: Record<string, string>
 }) {
+  const channelLangBySite = buildChannelLangBySite(channelGroupInfoByKey)
   const programsByGroup = new Map<string, Program[]>()
   for (const program of programs.all()) {
-    const lang = resolveProgramLang(program)
+    const lang = resolveProgramLang(program, channelLangBySite)
     const key = buildGroupKey(program.channel, program.site, lang)
     const list = programsByGroup.get(key) || []
     list.push(program)
@@ -393,10 +394,10 @@ function fillProgramGaps({
   for (const [key, groupPrograms] of programsByGroup) {
     const firstProgram = groupPrograms[0]
     if (!firstProgram) continue
-    const lang = resolveProgramLang(firstProgram)
+    const groupInfo = channelGroupInfoByKey.get(key)
+    const lang = groupInfo?.lang || resolveProgramLang(firstProgram, channelLangBySite)
     const channelId = firstProgram.channel
     const site = firstProgram.site
-    const groupInfo = channelGroupInfoByKey.get(key)
     const rangeInfo =
       groupInfo || channelRangeBySite.get(buildSiteKey(channelId, site)) || getProgramRange(groupPrograms)
     if (!rangeInfo) continue
@@ -474,9 +475,17 @@ function getProgramRange(programs: Program[]): ChannelRangeInfo | null {
   return { rangeStart, rangeEnd }
 }
 
-function resolveProgramLang(program: Program): string {
+function resolveProgramLang(
+  program: Program,
+  channelLangBySite?: Map<string, string | null>
+): string {
   const lang = program.titles && program.titles.length ? program.titles[0].lang : ''
-  return lang || DEFAULT_LANG
+  if (lang) return lang
+  if (channelLangBySite) {
+    const fallback = channelLangBySite.get(buildSiteKey(program.channel, program.site))
+    if (fallback) return fallback
+  }
+  return DEFAULT_LANG
 }
 
 function buildGroupKey(channelId: string, site: string, lang: string): string {
@@ -485,6 +494,25 @@ function buildGroupKey(channelId: string, site: string, lang: string): string {
 
 function buildSiteKey(channelId: string, site: string): string {
   return `${channelId}||${site}`
+}
+
+function buildChannelLangBySite(
+  channelGroupInfoByKey: Map<string, ChannelGroupInfo>
+): Map<string, string | null> {
+  const channelLangBySite = new Map<string, string | null>()
+  for (const info of channelGroupInfoByKey.values()) {
+    const siteKey = buildSiteKey(info.channelId, info.site)
+    const current = channelLangBySite.get(siteKey)
+    if (!current) {
+      channelLangBySite.set(siteKey, info.lang)
+      continue
+    }
+    if (current !== info.lang) {
+      channelLangBySite.set(siteKey, null)
+    }
+  }
+
+  return channelLangBySite
 }
 
 function normalizeLang(lang: string): string {
