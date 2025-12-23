@@ -10,10 +10,11 @@ import { Storage } from '@freearhey/storage-js'
 import { CurlGenerator } from 'curl-generator'
 import { QueueItem } from '../../types/queue'
 import { Option, program } from 'commander'
-import { SITES_DIR } from '../../constants'
+import { ROOT_DIR, SITES_DIR } from '../../constants'
 import { data, loadData } from '../../api'
 import dayjs, { Dayjs } from 'dayjs'
 import merge from 'lodash.merge'
+import fs from 'fs'
 import path from 'path'
 
 program
@@ -69,6 +70,23 @@ interface GrabOptions {
   days?: number
   proxy?: string
 }
+
+interface ChannelGroupInfo {
+  channelId: string
+  site: string
+  lang: string
+  rangeStart: number
+  rangeEnd: number
+}
+
+interface ChannelRangeInfo {
+  rangeStart: number
+  rangeEnd: number
+}
+
+const DEFAULT_LANG = 'en'
+const DEFAULT_GAP_TITLE = 'Off Air'
+const GAP_TITLES_PATH = path.resolve(ROOT_DIR, 'scripts/data/gap_titles.json')
 
 const options: GrabOptions = program.opts()
 
@@ -188,6 +206,8 @@ async function main() {
 
   logger.info('creating queue...')
   const queue = new Collection<QueueItem>()
+  const channelGroupInfoByKey = new Map<string, ChannelGroupInfo>()
+  const channelRangeBySite = new Map<string, ChannelRangeInfo>()
 
   let index = 0
   for (const channel of channelsFromXML.all()) {
@@ -200,6 +220,23 @@ async function main() {
 
     const days = globalConfig.days || config.days
     const currDate = dayjs.utc(process.env.CURR_DATE || new Date().toISOString())
+    const rangeStart = currDate.valueOf()
+    const rangeEnd = currDate.add(days, 'd').valueOf()
+    const channelLang = channel.lang || DEFAULT_LANG
+    const groupKey = buildGroupKey(channel.xmltv_id, channel.site, channelLang)
+    if (!channelGroupInfoByKey.has(groupKey)) {
+      channelGroupInfoByKey.set(groupKey, {
+        channelId: channel.xmltv_id,
+        site: channel.site,
+        lang: channelLang,
+        rangeStart,
+        rangeEnd
+      })
+    }
+    const siteKey = buildSiteKey(channel.xmltv_id, channel.site)
+    if (!channelRangeBySite.has(siteKey)) {
+      channelRangeBySite.set(siteKey, { rangeStart, rangeEnd })
+    }
     const dates = Array.from({ length: days }, (_, day) => currDate.add(day, 'd'))
 
     dates.forEach((date: Dayjs) => {
@@ -269,6 +306,14 @@ async function main() {
 
   await Promise.all(requests.all())
 
+  const gapTitlesByLang = loadGapTitles()
+  fillProgramGaps({
+    programs,
+    channelGroupInfoByKey,
+    channelRangeBySite,
+    gapTitlesByLang
+  })
+
   const output = globalConfig.output || defaultConfig.output
 
   const pathTemplate = new Template(output)
@@ -309,6 +354,149 @@ async function main() {
 }
 
 main()
+
+function fillProgramGaps({
+  programs,
+  channelGroupInfoByKey,
+  channelRangeBySite,
+  gapTitlesByLang
+}: {
+  programs: Collection<Program>
+  channelGroupInfoByKey: Map<string, ChannelGroupInfo>
+  channelRangeBySite: Map<string, ChannelRangeInfo>
+  gapTitlesByLang: Record<string, string>
+}) {
+  const programsByGroup = new Map<string, Program[]>()
+  for (const program of programs.all()) {
+    const lang = resolveProgramLang(program)
+    const key = buildGroupKey(program.channel, program.site, lang)
+    const list = programsByGroup.get(key) || []
+    list.push(program)
+    programsByGroup.set(key, list)
+  }
+
+  const gapPrograms: Program[] = []
+
+  for (const [key, groupPrograms] of programsByGroup) {
+    const firstProgram = groupPrograms[0]
+    if (!firstProgram) continue
+    const lang = resolveProgramLang(firstProgram)
+    const channelId = firstProgram.channel
+    const site = firstProgram.site
+    const groupInfo = channelGroupInfoByKey.get(key)
+    const rangeInfo =
+      groupInfo || channelRangeBySite.get(buildSiteKey(channelId, site)) || getProgramRange(groupPrograms)
+    if (!rangeInfo) continue
+    if (rangeInfo.rangeEnd <= rangeInfo.rangeStart) continue
+
+    const gapTitle = getGapTitle(lang, gapTitlesByLang)
+    const sortedPrograms = groupPrograms
+      .filter(program => typeof program.start === 'number' && typeof program.stop === 'number')
+      .sort((a, b) => a.start - b.start || a.stop - b.stop)
+    let cursor = rangeInfo.rangeStart
+    for (const program of sortedPrograms) {
+      if (program.stop <= rangeInfo.rangeStart) {
+        cursor = Math.max(cursor, program.stop)
+        continue
+      }
+      if (program.start >= rangeInfo.rangeEnd) break
+      const programStart = Math.max(program.start, rangeInfo.rangeStart)
+      if (programStart > cursor) {
+        gapPrograms.push(
+          buildGapProgram({ channelId, site, lang }, cursor, Math.min(programStart, rangeInfo.rangeEnd), gapTitle)
+        )
+      }
+      cursor = Math.max(cursor, program.stop)
+      if (cursor >= rangeInfo.rangeEnd) break
+    }
+    if (cursor < rangeInfo.rangeEnd) {
+      gapPrograms.push(buildGapProgram({ channelId, site, lang }, cursor, rangeInfo.rangeEnd, gapTitle))
+    }
+  }
+
+  for (const info of channelGroupInfoByKey.values()) {
+    const key = buildGroupKey(info.channelId, info.site, info.lang)
+    if (programsByGroup.has(key)) continue
+    if (info.rangeEnd <= info.rangeStart) continue
+    const gapTitle = getGapTitle(info.lang, gapTitlesByLang)
+    gapPrograms.push(
+      buildGapProgram(
+        { channelId: info.channelId, site: info.site, lang: info.lang },
+        info.rangeStart,
+        info.rangeEnd,
+        gapTitle
+      )
+    )
+  }
+
+  if (gapPrograms.length) {
+    programs.concat(new Collection<Program>(gapPrograms))
+  }
+}
+
+function buildGapProgram(
+  info: { channelId: string; site: string; lang: string },
+  start: number,
+  stop: number,
+  title: string
+): Program {
+  return new Program({
+    site: info.site,
+    channel: info.channelId,
+    start,
+    stop,
+    titles: [{ value: title, lang: info.lang }]
+  })
+}
+
+function getProgramRange(programs: Program[]): ChannelRangeInfo | null {
+  let rangeStart = Number.POSITIVE_INFINITY
+  let rangeEnd = Number.NEGATIVE_INFINITY
+  for (const program of programs) {
+    if (typeof program.start !== 'number' || typeof program.stop !== 'number') continue
+    if (program.start < rangeStart) rangeStart = program.start
+    if (program.stop > rangeEnd) rangeEnd = program.stop
+  }
+  if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd)) return null
+  return { rangeStart, rangeEnd }
+}
+
+function resolveProgramLang(program: Program): string {
+  const lang = program.titles && program.titles.length ? program.titles[0].lang : ''
+  return lang || DEFAULT_LANG
+}
+
+function buildGroupKey(channelId: string, site: string, lang: string): string {
+  return `${channelId}||${site}||${lang}`
+}
+
+function buildSiteKey(channelId: string, site: string): string {
+  return `${channelId}||${site}`
+}
+
+function normalizeLang(lang: string): string {
+  const normalized = lang.trim().toLowerCase()
+  if (!normalized) return DEFAULT_LANG
+  const [base] = normalized.split(/[-_]/)
+  return base || DEFAULT_LANG
+}
+
+function getGapTitle(lang: string, gapTitlesByLang: Record<string, string>): string {
+  const normalized = normalizeLang(lang)
+  return gapTitlesByLang[normalized] || gapTitlesByLang[DEFAULT_LANG] || DEFAULT_GAP_TITLE
+}
+
+function loadGapTitles(): Record<string, string> {
+  try {
+    const raw = fs.readFileSync(GAP_TITLES_PATH, 'utf8')
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed
+  } catch {
+    return {}
+  }
+
+  return {}
+}
 
 function getLogoForChannel(channel: Channel): string | null {
   const feedData = data.feedsKeyByStreamId.get(channel.xmltv_id)
