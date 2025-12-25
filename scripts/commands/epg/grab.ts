@@ -416,15 +416,20 @@ function fillProgramGaps({
       if (program.start >= rangeInfo.rangeEnd) break
       const programStart = Math.max(program.start, rangeInfo.rangeStart)
       if (programStart > cursor) {
-        gapPrograms.push(
-          buildGapProgram({ channelId, site, lang }, cursor, Math.min(programStart, rangeInfo.rangeEnd), gapTitle)
+        const gapEnd = Math.min(programStart, rangeInfo.rangeEnd)
+        appendGapPrograms(
+          gapPrograms,
+          { channelId, site, lang },
+          cursor,
+          gapEnd,
+          gapTitle
         )
       }
       cursor = Math.max(cursor, program.stop)
       if (cursor >= rangeInfo.rangeEnd) break
     }
     if (cursor < rangeInfo.rangeEnd) {
-      gapPrograms.push(buildGapProgram({ channelId, site, lang }, cursor, rangeInfo.rangeEnd, gapTitle))
+      appendGapPrograms(gapPrograms, { channelId, site, lang }, cursor, rangeInfo.rangeEnd, gapTitle)
     }
   }
 
@@ -433,18 +438,30 @@ function fillProgramGaps({
     if (programsByGroup.has(key)) continue
     if (info.rangeEnd <= info.rangeStart) continue
     const gapTitle = getGapTitle(info.lang, gapTitlesByLang)
-    gapPrograms.push(
-      buildGapProgram(
-        { channelId: info.channelId, site: info.site, lang: info.lang },
-        info.rangeStart,
-        info.rangeEnd,
-        gapTitle
-      )
+    appendGapPrograms(
+      gapPrograms,
+      { channelId: info.channelId, site: info.site, lang: info.lang },
+      info.rangeStart,
+      info.rangeEnd,
+      gapTitle
     )
   }
 
   if (gapPrograms.length) {
     programs.concat(new Collection<Program>(gapPrograms))
+  }
+}
+
+function appendGapPrograms(
+  gapPrograms: Program[],
+  info: { channelId: string; site: string; lang: string },
+  start: number,
+  stop: number,
+  title: string
+) {
+  const segments = splitRangeIntoBlocks(start, stop)
+  for (const segment of segments) {
+    gapPrograms.push(buildGapProgram(info, segment.start, segment.stop, title))
   }
 }
 
@@ -494,6 +511,37 @@ function buildGroupKey(channelId: string, site: string, lang: string): string {
 
 function buildSiteKey(channelId: string, site: string): string {
   return `${channelId}||${site}`
+}
+
+function splitRangeIntoBlocks(start: number, stop: number): Array<{ start: number; stop: number }> {
+  const segments: Array<{ start: number; stop: number }> = []
+  let cursor = start
+  while (cursor < stop) {
+    const nextBoundary = getNextBlockBoundary(cursor)
+    const segmentStop = Math.min(nextBoundary, stop)
+    if (segmentStop > cursor) {
+      segments.push({ start: cursor, stop: segmentStop })
+    }
+    cursor = segmentStop
+  }
+  return segments
+}
+
+function getNextBlockBoundary(timestamp: number): number {
+  const time = dayjs.utc(timestamp)
+  const hour = time.hour()
+  const blockStartHour = hour - (hour % 4)
+  const nextBoundaryHour = blockStartHour + 4
+  const nextBoundary = time
+    .startOf('hour')
+    .hour(nextBoundaryHour)
+    .minute(0)
+    .second(0)
+    .millisecond(0)
+  if (nextBoundaryHour >= 24) {
+    return time.startOf('day').add(1, 'day').valueOf()
+  }
+  return nextBoundary.valueOf()
 }
 
 function buildChannelLangBySite(
