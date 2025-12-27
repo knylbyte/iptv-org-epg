@@ -3,22 +3,9 @@ const dayjs = require('dayjs')
 const utc = require('dayjs/plugin/utc')
 const customParseFormat = require('dayjs/plugin/customParseFormat')
 
+let X_CSRFTOKEN
+let Cookie
 const cookiesToExtract = ['JSESSIONID', 'CSESSIONID', 'CSRFSESSION']
-const poolSize = normalizePoolSize(process.env.MAX_CONNECTIONS)
-const sessionPool = Array.from({ length: poolSize }, () => ({
-  token: null,
-  cookie: null,
-  promise: null
-}))
-let sessionIndex = 0
-
-process.once('beforeExit', () => {
-  for (const slot of sessionPool) {
-    slot.token = null
-    slot.cookie = null
-    slot.promise = null
-  }
-})
 
 dayjs.extend(utc)
 dayjs.extend(customParseFormat)
@@ -175,7 +162,12 @@ function parseItems(content) {
   return data.playbilllist
 }
 
-async function fetchSession() {
+async function fetchCookieAndToken() {
+  // Only fetch the cookies and csrfToken if they are not already set
+  if (X_CSRFTOKEN && Cookie) {
+    return
+  }
+
   try {
     const response = await axios.request({
       url: 'https://api.prod.sngtv.magentatv.de/EPG/JSON/Authenticate',
@@ -203,47 +195,19 @@ async function fetchSession() {
     // check if we recieved a csrfToken only then store the values
     if (!response.data.csrfToken) {
       console.log('csrfToken not found in the response.')
-      return null
+      return
     }
 
-    return {
-      token: response.data.csrfToken,
-      cookie: extractedCookies.join(' ')
-    }
+    X_CSRFTOKEN = response.data.csrfToken
+    Cookie = extractedCookies.join(' ')
+
   } catch(error) {
     console.error(error)
-    return null
   }
 }
 
 async function setHeaders() {
-  const session = await getSession()
+  await fetchCookieAndToken()
 
-  return session ? { X_CSRFTOKEN: session.token, Cookie: session.cookie } : {}
-}
-
-function normalizePoolSize(value) {
-  const n = Number(value)
-  if (!Number.isFinite(n) || n < 1) return 1
-  return Math.floor(n)
-}
-
-async function getSession() {
-  const slot = sessionPool[sessionIndex++ % sessionPool.length]
-  const missing = !slot.token || !slot.cookie
-  if (!missing) return slot
-  if (slot.promise) return slot.promise
-
-  slot.promise = (async () => {
-    const fresh = await fetchSession()
-    if (!fresh) return null
-    slot.token = fresh.token
-    slot.cookie = fresh.cookie
-    return slot
-  })()
-    .finally(() => {
-      slot.promise = null
-    })
-
-  return slot.promise
+  return { X_CSRFTOKEN, Cookie }
 }
