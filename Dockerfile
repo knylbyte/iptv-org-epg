@@ -33,7 +33,6 @@ COPY pm2.config.js ./pm2.config.js
 
 RUN mkdir -p \
       /epg/public \
-      /epg/.pm2 \
       /epg/temp/data \
  && npm run api:load \
  && for file in \
@@ -62,8 +61,8 @@ RUN mkdir -p \
 FROM ${NODE_IMAGE} AS runner
 
 ENV NODE_ENV=production \
-    HOME=/epg \
-    PM2_HOME=/epg/.pm2 \
+    HOME=/home/node \
+    PM2_HOME=/home/node/.pm2 \
     CRON_SCHEDULE="0 0 * * *" \
     PORT=3000 \
     RUN_AT_STARTUP=true \
@@ -86,7 +85,12 @@ RUN apt-get update \
     apt-get install -y --no-install-recommends \
       ca-certificates \
       tzdata \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && mkdir -p \
+      /home/node/.pm2/logs \
+      /home/node/.pm2/pids \
+      /home/node/.pm2/modules \
+ && chown -R node:node /home/node/.pm2
 
 WORKDIR /epg
 
