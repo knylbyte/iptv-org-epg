@@ -295,8 +295,3 @@ jobs:
           gh attestation verify \
             "oci://${IMAGE}@${DIGEST}" \
             --repo "$GITHUB_REPOSITORY"
-
-      - name: Inspect image
-        run: |
-          docker buildx imagetools inspect ${{ env.IMAGE }}:latest
-          docker buildx imagetools inspect ${{ env.IMAGE }}:${{ steps.vars.outputs.short_sha }}
