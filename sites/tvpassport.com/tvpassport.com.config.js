@@ -5,6 +5,7 @@ const utc = require('dayjs/plugin/utc')
 const timezone = require('dayjs/plugin/timezone')
 const customParseFormat = require('dayjs/plugin/customParseFormat')
 const doFetch = require('@ntlab/sfetch')
+const FRENCH_CHANNELS = require('./__data__/frenchChannels.js')
 
 dayjs.extend(utc)
 dayjs.extend(timezone)
@@ -56,8 +57,6 @@ module.exports = {
     return programs
   },
   async channels() {
-    const FRENCH_CHANNELS = require('./__data__/frenchChannels.js')
-
     function wait(ms) {
       return new Promise(resolve => {
         setTimeout(resolve, ms)

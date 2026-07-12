@@ -11,8 +11,7 @@ const config = {
   days: 3,
   request: {
     httpsAgent: new https.Agent({
-      // The server omits its intermediate certificates, so keep verification enabled with its CA chain.
-      ca: fs.readFileSync(path.resolve(__dirname, 'ca-chain.pem'))
+      ca: fs.readFileSync(path.resolve(__dirname, '__data__/certificate.pem'))
     })
   },
   async url({ channel, date }) {
