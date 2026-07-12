@@ -149,6 +149,7 @@ jobs:
           file: Dockerfile
           platforms: ${{ matrix.platform }}
           push: true
+          provenance: false
           tags: ${{ env.IMAGE }}
           labels: |
             ${{ steps.meta.outputs.labels }}
@@ -282,7 +283,7 @@ jobs:
         with:
           subject-name: ${{ env.IMAGE }}
           subject-digest: ${{ steps.manifest.outputs.digest }}
-          push-to-registry: true
+          push-to-registry: false
           create-storage-record: false
 
       - name: Verify multi-platform attestation
@@ -293,8 +294,7 @@ jobs:
         run: |
           gh attestation verify \
             "oci://${IMAGE}@${DIGEST}" \
-            --repo "$GITHUB_REPOSITORY" \
-            --bundle-from-oci
+            --repo "$GITHUB_REPOSITORY"
 
       - name: Inspect image
         run: |
